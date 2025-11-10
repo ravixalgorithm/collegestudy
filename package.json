@@ -1,0 +1,17 @@
+{
+  "name": "collegestudy-migrations",
+  "version": "1.0.0",
+  "description": "Migration utilities for HBTU College Study app",
+  "private": true,
+  "scripts": {
+    "fix-expires-at": "node fix_expires_at.js",
+    "migrate": "node fix_expires_at.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.78.0",
+    "dotenv": "^16.3.1"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

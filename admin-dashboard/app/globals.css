@@ -1,0 +1,182 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+    :root {
+        --primary-50: #e6f2ff;
+        --primary-100: #cce5ff;
+        --primary-200: #99ccff;
+        --primary-300: #66b2ff;
+        --primary-400: #3399ff;
+        --primary-500: #0066cc;
+        --primary-600: #0052a3;
+        --primary-700: #003d7a;
+        --primary-800: #002952;
+        --primary-900: #001429;
+    }
+}
+
+@layer utilities {
+    .bg-primary-50 {
+        background-color: var(--primary-50);
+    }
+    .bg-primary-100 {
+        background-color: var(--primary-100);
+    }
+    .bg-primary-500 {
+        background-color: var(--primary-500);
+    }
+    .bg-primary-600 {
+        background-color: var(--primary-600);
+    }
+    .text-primary-500 {
+        color: var(--primary-500);
+    }
+    .text-primary-600 {
+        color: var(--primary-600);
+    }
+    .border-primary-500 {
+        border-color: var(--primary-500);
+    }
+    .ring-primary-500 {
+        --tw-ring-color: var(--primary-500);
+    }
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    color: #1f2937;
+    background: #ffffff;
+}
+
+/* Ensure all dialogs and forms have proper backgrounds */
+[data-radix-popper-content-wrapper] {
+    background: white !important;
+    border: 1px solid #e5e7eb !important;
+    box-shadow:
+        0 10px 15px -3px rgba(0, 0, 0, 0.1),
+        0 4px 6px -2px rgba(0, 0, 0, 0.05) !important;
+    border-radius: 0.5rem !important;
+}
+
+[role="dialog"] {
+    background: white !important;
+    border: 1px solid #e5e7eb !important;
+}
+
+/* Fix for dialog content that might be transparent */
+.dialog-content {
+    background: white !important;
+    color: #111827 !important;
+    border: 1px solid #e5e7eb !important;
+}
+
+/* Ensure all form elements are visible */
+input,
+textarea,
+select {
+    background: white !important;
+    border: 1px solid #d1d5db !important;
+    color: #111827 !important;
+}
+
+/* Fix button visibility */
+
+
+/* Ensure select dropdowns are visible */
+.select-content {
+    background: white !important;
+    border: 1px solid #e5e7eb !important;
+}
+
+/* Force visibility for all dialog elements */
+[role="dialog"] * {
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+
+/* Ensure labels are visible */
+label {
+    color: #374151 !important;
+    font-weight: 500 !important;
+}
+
+/* Fix any transparent overlays */
+[data-state="open"] {
+    background: rgba(0, 0, 0, 0.5) !important;
+}
+
+/* Ensure all text is visible */
+.text-muted-foreground {
+    color: #6b7280 !important;
+}
+
+/* Fix button text visibility */
+
+
+/* Fix placeholder text */
+::placeholder {
+    color: #9ca3af !important;
+    opacity: 1 !important;
+}
+
+/* Ensure dialog wrapper is visible */
+[data-radix-dialog-content] {
+    background: white !important;
+    color: #111827 !important;
+    border: 1px solid #e5e7eb !important;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25) !important;
+}
+
+/* Ultimate fallback for dialog backgrounds */
+div[role="dialog"],
+div[data-state="open"][role="dialog"],
+.max-w-2xl[role="dialog"],
+[data-radix-dialog-content].max-w-2xl {
+    background-color: #ffffff !important;
+    background: #ffffff !important;
+}
+
+/* Force white background on any dialog with these classes */
+.bg-white[role="dialog"],
+.bg-white.border-gray-200,
+.max-w-2xl.bg-white {
+    background-color: #ffffff !important;
+}
+
+/* Force white background on all dialog content */
+[role="dialog"],
+[data-state="open"][role="dialog"],
+.dialog-content,
+[data-radix-dialog-content],
+[data-radix-popper-content-wrapper] {
+    background-color: #ffffff !important;
+    color: #111827 !important;
+}
+
+/* Specific fixes for common resource dialogs */
+.max-w-2xl[role="dialog"],
+.max-w-2xl .dialog-content,
+.max-w-2xl[data-radix-dialog-content] {
+    background-color: #ffffff !important;
+    border: 1px solid #e5e7eb !important;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05) !important;
+}
+
+/* Ensure all child elements inherit proper colors */
+[role="dialog"] *,
+[data-radix-dialog-content] * {
+    color: inherit !important;
+}
+
+/* Fix any potential overlay bleeding */
+[data-radix-dialog-overlay] {
+    background-color: rgba(0, 0, 0, 0.5) !important;
+    backdrop-filter: blur(2px) !important;
+}
