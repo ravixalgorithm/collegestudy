@@ -37,11 +37,6 @@ interface Note {
     name: string;
     code: string;
     semester: number;
-    branches?: {
-      id: string;
-      name: string;
-      code: string;
-    };
   };
   note_branches?: {
     branch_id: string;
@@ -121,12 +116,7 @@ export default function NotesPage() {
             id,
             name,
             code,
-            semester,
-            branches (
-              id,
-              name,
-              code
-            )
+            semester
           ),
           note_branches (
             branch_id,
@@ -148,6 +138,15 @@ export default function NotesPage() {
 
       const { data: notesData, error } = await query;
       if (error) throw error;
+      
+      console.log("Loaded notes data:", notesData);
+      console.log("Notes with branch associations:", notesData?.map(note => ({
+        id: note.id,
+        title: note.title,
+        subject: note.subjects?.name,
+        branches: note.note_branches?.map((nb: any) => nb.branches?.code)
+      })));
+      
       setNotes(notesData || []);
     } catch (error) {
       console.error("Error loading data:", error);
@@ -158,15 +157,78 @@ export default function NotesPage() {
 
   async function loadSubjects(branchId: string, semester: number) {
     try {
-      const { data } = await supabase
+      console.log("Loading subjects for branch:", branchId, "semester:", semester);
+      
+      // Query subjects using the subject_branches table for many-to-many relationships
+      // We need to join subjects table properly through the junction table
+      const { data, error } = await supabase
         .from("subjects")
-        .select("*")
-        .eq("branch_id", branchId)
+        .select(
+          `
+          *,
+          subject_branches!inner (
+            branch_id
+          )
+        `,
+        )
+        .eq("subject_branches.branch_id", branchId)
         .eq("semester", semester)
+        .eq("is_active", true)
         .order("name");
-      setSubjects(data || []);
+
+      if (error) {
+        console.error("Primary query error:", error);
+        
+        // Try alternative query approach
+        console.log("Trying alternative query approach...");
+        const { data: altData, error: altError } = await supabase
+          .from("subject_branches")
+          .select(
+            `
+            subjects (
+              id,
+              name,
+              code,
+              semester,
+              credits,
+              syllabus_url,
+              description,
+              is_active
+            )
+          `,
+          )
+          .eq("branch_id", branchId)
+          .eq("subjects.semester", semester)
+          .eq("subjects.is_active", true);
+
+        if (altError) {
+          console.error("Alternative query error:", altError);
+          setSubjects([]);
+          return;
+        }
+
+        if (altData && altData.length > 0) {
+          console.log("Alternative query data:", altData);
+          const mappedSubjects = altData
+            .map((item: any) => item.subjects)
+            .filter((s: any): s is Subject => s !== null && typeof s === 'object' && !Array.isArray(s));
+          console.log("Mapped subjects from alternative query:", mappedSubjects);
+          setSubjects(mappedSubjects);
+          return;
+        }
+      }
+
+      if (data && data.length > 0) {
+        console.log("Primary query successful, subjects found:", data);
+        setSubjects(data);
+        return;
+      }
+
+      console.log("No subjects found for the given criteria");
+      setSubjects([]);
     } catch (error) {
       console.error("Error loading subjects:", error);
+      setSubjects([]);
     }
   }
 
@@ -189,19 +251,28 @@ export default function NotesPage() {
       return;
     }
 
-    setSaving(true);
     try {
       const noteData = {
         title: formData.title,
+
         description: formData.description,
+
         subject_id: formData.subject_id,
+
         file_url: formData.google_drive_link,
+
         file_type: formData.file_type,
+
         is_verified: true,
+
         tags: formData.tags ? formData.tags.split(",").map((t) => t.trim()) : [],
+
         is_pyq: formData.is_pyq,
+
         module_number: formData.is_pyq ? null : formData.module_number ? parseInt(formData.module_number) : null,
+
         academic_year: formData.is_pyq ? formData.academic_year : null,
+
         exam_type: formData.is_pyq ? formData.exam_type : null,
       };
 
@@ -209,37 +280,61 @@ export default function NotesPage() {
 
       if (editingNote) {
         // Update existing note
+
         const { error } = await supabase.from("notes").update(noteData).eq("id", editingNote.id);
+
         if (error) throw error;
+
         noteId = editingNote.id;
 
         // Delete existing branch associations
+
         await supabase.from("note_branches").delete().eq("note_id", noteId);
       } else {
         // Create new note
+
         const { data, error } = await supabase.from("notes").insert(noteData).select().single();
+
         if (error) throw error;
+
         noteId = data.id;
       }
 
-      // Create branch associations using direct insertion
-      const branchAssociations = formData.branch_ids.map((branchId) => ({
+      // Fetch all branches associated with the selected subject
+      const { data: subjectBranches, error: subjectBranchesError } = await supabase
+        .from("subject_branches")
+        .select("branch_id")
+        .eq("subject_id", formData.subject_id);
+
+      if (subjectBranchesError) {
+        console.error("Error fetching subject branches:", subjectBranchesError);
+        throw new Error(`Failed to fetch subject branches: ${subjectBranchesError.message}`);
+      }
+
+      const branchAssociations = (subjectBranches || []).map((branch) => ({
         note_id: noteId,
-        branch_id: branchId,
+
+        branch_id: branch.branch_id,
       }));
 
       const { error: branchError } = await supabase.from("note_branches").insert(branchAssociations);
+
       if (branchError) {
         console.error("Branch association error:", branchError);
+
         throw new Error(`Failed to create branch associations: ${branchError.message}`);
       }
 
       alert(editingNote ? "Note updated successfully!" : "Note added successfully!");
+
       setShowModal(false);
+
       resetForm();
+
       loadData();
     } catch (error: any) {
       console.error("Error saving note:", error);
+
       alert("Error saving note: " + error.message);
     } finally {
       setSaving(false);
@@ -273,9 +368,17 @@ export default function NotesPage() {
     setEditingNote(note);
 
     // Fetch branch associations for this note
-    const { data: noteBranches } = await supabase.from("note_branches").select("branch_id").eq("note_id", note.id);
+    const { data: noteBranches, error: noteBranchesError } = await supabase
+      .from("note_branches")
+      .select("branch_id")
+      .eq("note_id", note.id);
+
+    if (noteBranchesError) {
+      console.error("Error fetching note branches:", noteBranchesError);
+    }
 
     const branchIds = noteBranches?.map((nb) => nb.branch_id) || [];
+    console.log("Note branches for editing:", branchIds);
 
     setFormData({
       title: note.title,
@@ -551,8 +654,9 @@ export default function NotesPage() {
       {/* Add/Edit Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between p-6 border-b border-gray-200">
+          <div className="bg-white rounded-xl max-w-2xl w-full max-h-[90vh] flex flex-col">
+            {/* Fixed Header */}
+            <div className="flex items-center justify-between p-6 border-b border-gray-200 flex-shrink-0">
               <h2 className="text-xl font-bold text-gray-900">{editingNote ? "Edit Note" : "Add New Note"}</h2>
               <button
                 onClick={() => {
@@ -565,7 +669,9 @@ export default function NotesPage() {
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+            {/* Scrollable Form Content */}
+            <div className="flex-1 overflow-y-auto">
+              <form onSubmit={handleSubmit} className="p-6 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Title *</label>
                 <input
@@ -594,7 +700,7 @@ export default function NotesPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Applicable Branches * (Select one or more)
                 </label>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 p-4 border border-gray-300 rounded-lg bg-gray-50 max-h-64 overflow-y-auto">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 p-4 border border-gray-300 rounded-lg bg-gray-50 max-h-48 overflow-y-auto">
                   {branches.map((branch) => (
                     <label
                       key={branch.id}
@@ -829,6 +935,7 @@ export default function NotesPage() {
                 </button>
               </div>
             </form>
+            </div>
           </div>
         </div>
       )}

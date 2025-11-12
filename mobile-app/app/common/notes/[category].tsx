@@ -30,21 +30,29 @@ import {
 
 interface Note {
   id: string;
+  category_id: string;
+  topic_id: string;
   title: string;
   description: string;
-  file_url: string;
+  resource_type: 'note' | 'ai_tool';
+  file_url?: string;
   file_type?: string;
   file_size?: string;
-  uploaded_by: string;
-  uploaded_at: string;
+  tool_url?: string;
+  pricing_type?: string;
+  tags: string[];
+  thumbnail_url?: string;
   downloads: number;
+  views: number;
   rating: number;
   rating_count: number;
-  views: number;
   is_featured: boolean;
   is_approved: boolean;
-  is_verified: boolean;
-  tags: string[];
+  is_active: boolean;
+  uploaded_by?: string;
+  created_at: string;
+  updated_at: string;
+  uploaded_at?: string; // For backward compatibility
 }
 
 interface User {
@@ -70,13 +78,15 @@ export default function CategoryNotes() {
     try {
       setLoading(true);
 
-      // Load notes from database
+      // Load notes from unified resources table
       const { data: notesData, error } = await supabase
-        .from("common_notes")
+        .from("resources")
         .select("*")
         .eq("category_id", category)
         .eq("topic_id", topicId)
+        .eq("resource_type", "note")
         .eq("is_approved", true)
+        .eq("is_active", true)
         .order("created_at", { ascending: false });
 
       if (error) throw error;
@@ -88,20 +98,27 @@ export default function CategoryNotes() {
 
       setNotes(formattedNotes);
 
-      // Load uploader information
+      // Load uploader information (optional - don't fail if no permission)
       if (notesData && notesData.length > 0) {
-        const uploaderIds = [...new Set(notesData.map(note => note.uploaded_by))];
-        const { data: usersData } = await supabase
-          .from("users")
-          .select("id, name, avatar_url")
-          .in("id", uploaderIds);
+        try {
+          const uploaderIds = [...new Set(notesData.map(note => note.uploaded_by).filter(Boolean))];
+          if (uploaderIds.length > 0) {
+            const { data: usersData, error: usersError } = await supabase
+              .from("users")
+              .select("id, name, avatar_url")
+              .in("id", uploaderIds);
 
-        if (usersData) {
-          const uploadersMap = usersData.reduce((acc, user) => {
-            acc[user.id] = user;
-            return acc;
-          }, {} as { [key: string]: User });
-          setUploaders(uploadersMap);
+            if (!usersError && usersData) {
+              const uploadersMap = usersData.reduce((acc, user) => {
+                acc[user.id] = user;
+                return acc;
+              }, {} as { [key: string]: User });
+              setUploaders(uploadersMap);
+            }
+          }
+        } catch (userError) {
+          // Silently handle user loading errors - not critical for functionality
+          console.log("Could not load user information (permissions may be restricted)");
         }
       }
     } catch (error) {
@@ -122,16 +139,20 @@ export default function CategoryNotes() {
     try {
       // Update download count
       await supabase
-        .from("common_notes")
+        .from("resources")
         .update({ downloads: (note.downloads || 0) + 1 })
         .eq("id", note.id);
 
       // Open file URL
-      const supported = await Linking.canOpenURL(note.file_url);
-      if (supported) {
-        await Linking.openURL(note.file_url);
+      if (note.file_url) {
+        const supported = await Linking.canOpenURL(note.file_url);
+        if (supported) {
+          await Linking.openURL(note.file_url);
+        } else {
+          Alert.alert("Error", "Unable to open this file");
+        }
       } else {
-        Alert.alert("Error", "Unable to open this file");
+        Alert.alert("Error", "File URL not available");
       }
 
       // Update local state
@@ -150,7 +171,7 @@ export default function CategoryNotes() {
     try {
       // Update view count
       await supabase
-        .from("common_notes")
+        .from("resources")
         .update({ views: (note.views || 0) + 1 })
         .eq("id", note.id);
 
@@ -380,19 +401,12 @@ export default function CategoryNotes() {
                   </View>
                 </View>
 
-                {(note.is_verified || note.is_approved) && (
+                {note.is_approved && (
                   <View style={styles.verificationRow}>
-                    {note.is_verified && (
-                      <View style={styles.verifiedBadge}>
-                        <Shield color="#52c41a" size={12} />
-                        <Text style={styles.verifiedText}>Verified</Text>
-                      </View>
-                    )}
-                    {note.is_approved && (
-                      <View style={styles.approvedBadge}>
-                        <Text style={styles.approvedText}>✓ Approved</Text>
-                      </View>
-                    )}
+                    <View style={styles.approvedBadge}>
+                      <Award color="#1890ff" size={12} />
+                      <Text style={styles.approvedText}>Approved</Text>
+                    </View>
                   </View>
                 )}
 

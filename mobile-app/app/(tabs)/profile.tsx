@@ -175,7 +175,7 @@ export default function Profile() {
   }
 
   function handleHelp() {
-    Alert.alert("Help & Support", "For help, please contact:\n+918957221543(Priyal)\n+91 8630101565 (Ravi)");
+    Alert.alert("Help & Support", "For help, please contact:\nravixalgorithm@gmail.com\npriyalkumar06@gmail.com");
   }
 
   async function handleAbout() {

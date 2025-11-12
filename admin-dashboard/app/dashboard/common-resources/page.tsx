@@ -1,38 +1,40 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import Link from "next/link";
+import React, { useState, useEffect } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { toast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
 import {
-  Code,
-  Grid3X3,
-  Target,
-  Bot,
-  FileText,
-  Download,
-  Users,
-  TrendingUp,
-  Star,
-  Activity,
-  ArrowRight,
-  Plus,
   BarChart3,
-  Calendar,
-  AlertCircle,
+  Download,
+  Eye,
+  TrendingUp,
   CheckCircle,
   Clock,
-  Eye,
-  Settings,
-  Zap,
-  BookOpen,
+  ArrowRight,
+  Star,
+  FileText,
+  Code,
+  Globe,
+  Target,
+  Bot,
 } from "lucide-react";
+import { toast } from "sonner";
+import Link from "next/link";
+
+// Interfaces for the new unified schema
+interface Category {
+  id: string;
+  title: string;
+  description: string;
+  icon: string;
+  color: string;
+  sort_order: number;
+  is_active: boolean;
+}
 
 interface CategoryStats {
   id: string;
@@ -40,47 +42,44 @@ interface CategoryStats {
   icon: any;
   color: string;
   topics_count: number;
+  resources_count: number;
   notes_count: number;
+  ai_tools_count: number;
   downloads: number;
-  active_notes: number;
+  approved_resources: number;
 }
 
-interface AIToolStats {
-  total_tools: number;
-  active_tools: number;
-  featured_tools: number;
-  premium_tools: number;
-  categories_count: number;
+interface OverallStats {
+  totalResources: number;
+  approvedResources: number;
+  totalTopics: number;
+  totalDownloads: number;
+  totalViews: number;
+  weeklyGrowth: number;
 }
 
 interface RecentActivity {
   id: string;
-  type: "note_added" | "tool_added" | "note_approved" | "topic_created";
   title: string;
-  category: string;
+  type: 'note' | 'ai_tool';
+  category_id: string;
   created_at: string;
-  user_name?: string;
+  uploader?: string;
 }
 
 export default function CommonResourcesOverview() {
   const [categoryStats, setCategoryStats] = useState<CategoryStats[]>([]);
-  const [aiToolStats, setAiToolStats] = useState<AIToolStats>({
-    total_tools: 0,
-    active_tools: 0,
-    featured_tools: 0,
-    premium_tools: 0,
-    categories_count: 0,
-  });
-  const [recentActivity, setRecentActivity] = useState<RecentActivity[]>([]);
   const [loading, setLoading] = useState(true);
   const [totalDownloads, setTotalDownloads] = useState(0);
   const [pendingApprovals, setPendingApprovals] = useState(0);
-  const [overallStats, setOverallStats] = useState({
-    totalTopics: 0,
+  const [recentActivity, setRecentActivity] = useState<RecentActivity[]>([]);
+  const [overallStats, setOverallStats] = useState<OverallStats>({
     totalResources: 0,
     approvedResources: 0,
+    totalTopics: 0,
+    totalDownloads: 0,
     totalViews: 0,
-    weeklyGrowth: 0
+    weeklyGrowth: 0,
   });
 
   useEffect(() => {
@@ -92,232 +91,254 @@ export default function CommonResourcesOverview() {
       setLoading(true);
       await Promise.all([
         loadCategoryStats(),
-        loadAIToolStats(),
         loadRecentActivity(),
         loadPendingApprovals(),
         loadOverallStats()
       ]);
     } catch (error) {
       console.error("Error loading overview data:", error);
-      toast({
-        title: "Error",
-        description: "Failed to load overview data",
-        variant: "destructive",
-      });
+      toast.error("Failed to load overview data");
     } finally {
       setLoading(false);
     }
   };
 
   const loadCategoryStats = async () => {
-    // Load categories
-    const { data: categories } = await supabase.from("common_categories").select("*").order("sort_order");
+    try {
+      console.log("Loading category stats from unified schema...");
+      
+      // Load categories
+      const { data: categories, error: categoriesError } = await supabase
+        .from("categories")
+        .select("*")
+        .eq("is_active", true)
+        .order("sort_order");
 
-    if (!categories) return;
+      if (categoriesError) {
+        console.error("Error loading categories:", categoriesError);
+        return;
+      }
 
-    // Get stats for each category
-    const statsPromises = categories.map(async (category) => {
-      // Count topics
-      const { count: topicsCount } = await supabase
-        .from("common_topics")
-        .select("*", { count: "exact", head: true })
-        .eq("category_id", category.id)
-        .eq("is_active", true);
+      console.log("Categories loaded:", categories);
 
-      // Count notes
-      const { count: notesCount } = await supabase
-        .from("common_notes")
-        .select("*", { count: "exact", head: true })
-        .eq("category_id", category.id);
+      if (!categories || categories.length === 0) {
+        console.log("No categories found");
+        setCategoryStats([]);
+        return;
+      }
 
-      // Count active/approved notes
-      const { count: activeNotesCount } = await supabase
-        .from("common_notes")
-        .select("*", { count: "exact", head: true })
-        .eq("category_id", category.id)
-        .eq("is_approved", true);
+      // Get stats for each category
+      const statsPromises = categories.map(async (category: Category) => {
+        console.log("Processing category:", category.id, category.title);
+        
+        // Count topics (only for note-based categories)
+        const { count: topicsCount, error: topicsError } = await supabase
+          .from("topics")
+          .select("*", { count: "exact", head: true })
+          .eq("category_id", category.id)
+          .eq("is_active", true);
 
-      // Sum downloads
-      const { data: downloadData } = await supabase
-        .from("common_notes")
-        .select("downloads")
-        .eq("category_id", category.id);
+        if (topicsError) {
+          console.error("Error loading topics for category:", category.id, topicsError);
+        }
 
-      const downloads = downloadData?.reduce((sum, note) => sum + (note.downloads || 0), 0) || 0;
+        // Count total resources
+        const { count: totalResourcesCount, error: resourcesError } = await supabase
+          .from("resources")
+          .select("*", { count: "exact", head: true })
+          .eq("category_id", category.id)
+          .eq("is_active", true);
 
-      const iconMap: { [key: string]: any } = {
-        dsa: Code,
-        development: Grid3X3,
-        placement: Target,
-      };
+        if (resourcesError) {
+          console.error("Error loading resources for category:", category.id, resourcesError);
+        }
 
-      return {
-        id: category.id,
-        title: category.title,
-        icon: iconMap[category.id] || FileText,
-        color: category.color || "#1890ff",
-        topics_count: topicsCount || 0,
-        notes_count: notesCount || 0,
-        downloads,
-        active_notes: activeNotesCount || 0,
-      };
-    });
+        // Count notes specifically
+        const { count: notesCount, error: notesError } = await supabase
+          .from("resources")
+          .select("*", { count: "exact", head: true })
+          .eq("category_id", category.id)
+          .eq("resource_type", "note")
+          .eq("is_active", true);
 
-    const stats = await Promise.all(statsPromises);
-    setCategoryStats(stats);
-    setTotalDownloads(stats.reduce((sum, stat) => sum + stat.downloads, 0));
-  };
+        if (notesError) {
+          console.error("Error loading notes for category:", category.id, notesError);
+        }
 
-  const loadAIToolStats = async () => {
-    // Count total tools
-    const { count: totalTools } = await supabase.from("ai_tools").select("*", { count: "exact", head: true });
+        // Count AI tools specifically
+        const { count: aiToolsCount, error: aiToolsError } = await supabase
+          .from("resources")
+          .select("*", { count: "exact", head: true })
+          .eq("category_id", category.id)
+          .eq("resource_type", "ai_tool")
+          .eq("is_active", true);
 
-    // Count active tools
-    const { count: activeTools } = await supabase
-      .from("ai_tools")
-      .select("*", { count: "exact", head: true })
-      .eq("is_active", true);
+        if (aiToolsError) {
+          console.error("Error loading AI tools for category:", category.id, aiToolsError);
+        }
 
-    // Count featured tools
-    const { count: featuredTools } = await supabase
-      .from("ai_tools")
-      .select("*", { count: "exact", head: true })
-      .eq("is_featured", true);
+        // Count approved resources
+        const { count: approvedCount, error: approvedError } = await supabase
+          .from("resources")
+          .select("*", { count: "exact", head: true })
+          .eq("category_id", category.id)
+          .eq("is_approved", true)
+          .eq("is_active", true);
 
-    // Count premium tools
-    const { count: premiumTools } = await supabase
-      .from("ai_tools")
-      .select("*", { count: "exact", head: true })
-      .eq("is_premium", true);
+        if (approvedError) {
+          console.error("Error loading approved resources for category:", category.id, approvedError);
+        }
 
-    // Count categories
-    const { count: categoriesCount } = await supabase
-      .from("ai_tool_categories")
-      .select("*", { count: "exact", head: true })
-      .eq("is_active", true);
+        // Sum downloads
+        const { data: downloadData, error: downloadError } = await supabase
+          .from("resources")
+          .select("downloads")
+          .eq("category_id", category.id)
+          .eq("is_active", true);
 
-    setAiToolStats({
-      total_tools: totalTools || 0,
-      active_tools: activeTools || 0,
-      featured_tools: featuredTools || 0,
-      premium_tools: premiumTools || 0,
-      categories_count: categoriesCount || 0,
-    });
+        let downloads = 0;
+        if (downloadError) {
+          console.error("Error loading downloads for category:", category.id, downloadError);
+        } else if (downloadData) {
+          downloads = downloadData.reduce((sum, resource) => sum + (resource.downloads || 0), 0);
+        }
+
+        // Map icons
+        const iconMap: { [key: string]: any } = {
+          Code,
+          Globe,
+          Target,
+          Bot,
+          FileText,
+        };
+
+        console.log("Category stats for", category.id, ":", {
+          topics_count: topicsCount || 0,
+          resources_count: totalResourcesCount || 0,
+          notes_count: notesCount || 0,
+          ai_tools_count: aiToolsCount || 0,
+          downloads,
+          approved_resources: approvedCount || 0,
+        });
+
+        return {
+          id: category.id,
+          title: category.title,
+          icon: iconMap[category.icon] || FileText,
+          color: category.color,
+          topics_count: topicsCount || 0,
+          resources_count: totalResourcesCount || 0,
+          notes_count: notesCount || 0,
+          ai_tools_count: aiToolsCount || 0,
+          downloads,
+          approved_resources: approvedCount || 0,
+        };
+      });
+
+      const stats = await Promise.all(statsPromises);
+      console.log("Category stats processed:", stats);
+      setCategoryStats(stats);
+      setTotalDownloads(stats.reduce((sum, stat) => sum + stat.downloads, 0));
+    } catch (error) {
+      console.error("Error in loadCategoryStats:", error);
+      setCategoryStats([]);
+    }
   };
 
   const loadRecentActivity = async () => {
-    // Load recent notes
-    const { data: recentNotes } = await supabase
-      .from("common_notes")
-      .select(
-        `
-        id,
-        title,
-        category_id,
-        created_at,
-        is_approved,
-        users:uploaded_by(name)
-      `,
-      )
-      .order("created_at", { ascending: false })
-      .limit(5);
+    try {
+      console.log("Loading recent activity...");
+      
+      const { data: recentResources, error } = await supabase
+        .from("resources")
+        .select(`
+          id,
+          title,
+          resource_type,
+          category_id,
+          created_at,
+          users:uploaded_by(name)
+        `)
+        .eq("is_active", true)
+        .order("created_at", { ascending: false })
+        .limit(5);
 
-    // Load recent AI tools
-    const { data: recentTools } = await supabase
-      .from("ai_tools")
-      .select(
-        `
-        id,
-        name,
-        category_id,
-        created_at
-      `,
-      )
-      .order("created_at", { ascending: false })
-      .limit(5);
+      if (error) {
+        console.error("Error loading recent activity:", error);
+        return;
+      }
 
-    const activity: RecentActivity[] = [];
+      const activities: RecentActivity[] = (recentResources || []).map((resource: any) => ({
+        id: resource.id,
+        title: resource.title,
+        type: resource.resource_type,
+        category_id: resource.category_id,
+        created_at: resource.created_at,
+        uploader: resource.users?.name || "Unknown",
+      }));
 
-    // Process recent notes
-    recentNotes?.forEach((note) => {
-      activity.push({
-        id: note.id,
-        type: note.is_approved ? "note_approved" : "note_added",
-        title: note.title,
-        category: note.category_id,
-        created_at: note.created_at,
-        user_name: (note.users as any)?.name,
-      });
-    });
-
-    // Process recent tools
-    recentTools?.forEach((tool) => {
-      activity.push({
-        id: tool.id,
-        type: "tool_added",
-        title: tool.name,
-        category: "ai-tools",
-        created_at: tool.created_at,
-      });
-    });
-
-    // Sort by date and limit
-    activity.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-    setRecentActivity(activity.slice(0, 8));
+      setRecentActivity(activities);
+    } catch (error) {
+      console.error("Error in loadRecentActivity:", error);
+    }
   };
 
   const loadPendingApprovals = async () => {
-    const { count } = await supabase
-      .from("common_notes")
-      .select("*", { count: "exact", head: true })
-      .eq("is_approved", false);
+    try {
+      const { count, error } = await supabase
+        .from("resources")
+        .select("*", { count: "exact", head: true })
+        .eq("is_approved", false)
+        .eq("is_active", true);
 
-    setPendingApprovals(count || 0);
+      if (error) {
+        console.error("Error loading pending approvals:", error);
+        return;
+      }
+
+      setPendingApprovals(count || 0);
+    } catch (error) {
+      console.error("Error in loadPendingApprovals:", error);
+    }
   };
 
   const loadOverallStats = async () => {
     try {
-      // Total topics across all categories
-      const { count: totalTopics } = await supabase
-        .from("common_topics")
-        .select("*", { count: "exact", head: true });
-
-      // Total resources
+      // Get total resources
       const { count: totalResources } = await supabase
-        .from("common_notes")
-        .select("*", { count: "exact", head: true });
+        .from("resources")
+        .select("*", { count: "exact", head: true })
+        .eq("is_active", true);
 
-      // Approved resources
+      // Get approved resources
       const { count: approvedResources } = await supabase
-        .from("common_notes")
+        .from("resources")
         .select("*", { count: "exact", head: true })
-        .eq("is_approved", true);
+        .eq("is_approved", true)
+        .eq("is_active", true);
 
-      // Calculate total views (sum of all downloads + views)
-      const { data: viewsData } = await supabase
-        .from("common_notes")
-        .select("downloads, views");
-
-      const totalViews = viewsData?.reduce((sum, item) =>
-        sum + (item.downloads || 0) + (item.views || 0), 0) || 0;
-
-      // Calculate weekly growth (simplified - resources added in last 7 days)
-      const weekAgo = new Date();
-      weekAgo.setDate(weekAgo.getDate() - 7);
-
-      const { count: weeklyNew } = await supabase
-        .from("common_notes")
+      // Get total topics
+      const { count: totalTopics } = await supabase
+        .from("topics")
         .select("*", { count: "exact", head: true })
-        .gte("created_at", weekAgo.toISOString());
+        .eq("is_active", true);
 
-      const weeklyGrowth = (totalResources || 0) > 0 ? Math.round((weeklyNew || 0) / (totalResources || 0) * 100) : 0;
+      // Get total downloads and views
+      const { data: statsData } = await supabase
+        .from("resources")
+        .select("downloads, views")
+        .eq("is_active", true);
+
+      const totalDownloads = statsData?.reduce((sum, item) => sum + (item.downloads || 0), 0) || 0;
+      const totalViews = statsData?.reduce((sum, item) => sum + (item.views || 0), 0) || 0;
 
       setOverallStats({
-        totalTopics: totalTopics || 0,
         totalResources: totalResources || 0,
         approvedResources: approvedResources || 0,
+        totalTopics: totalTopics || 0,
+        totalDownloads,
         totalViews,
-        weeklyGrowth
+        weeklyGrowth: 12, // This would need to be calculated based on historical data
       });
     } catch (error) {
       console.error("Error loading overall stats:", error);
@@ -335,31 +356,12 @@ export default function CommonResourcesOverview() {
 
   const getActivityIcon = (type: string) => {
     switch (type) {
-      case "note_added":
-        return <FileText className="h-4 w-4" />;
-      case "note_approved":
-        return <Star className="h-4 w-4" />;
-      case "tool_added":
-        return <Bot className="h-4 w-4" />;
-      case "topic_created":
-        return <Plus className="h-4 w-4" />;
+      case "note":
+        return FileText;
+      case "ai_tool":
+        return Bot;
       default:
-        return <Activity className="h-4 w-4" />;
-    }
-  };
-
-  const getActivityColor = (type: string) => {
-    switch (type) {
-      case "note_added":
-        return "text-blue-500";
-      case "note_approved":
-        return "text-green-500";
-      case "tool_added":
-        return "text-purple-500";
-      case "topic_created":
-        return "text-orange-500";
-      default:
-        return "text-gray-500";
+        return FileText;
     }
   };
 
@@ -383,27 +385,25 @@ export default function CommonResourcesOverview() {
         <div className="border-b border-gray-200 pb-6">
           <div className="flex justify-between items-start">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-                
-                Common Resources Hub
-              </h1>
-              <p className="text-gray-600 mt-3">Comprehensive management of educational resources across all categories</p>
-              <div className="flex items-center gap-4 mt-3">
-                <Badge variant="outline" className="text-green-700 border-green-200 bg-green-50">
-                  <CheckCircle className="h-3 w-3 mr-1" />
-                  {overallStats.approvedResources} Approved
-                </Badge>
-                <Badge variant="outline" className="text-blue-700 border-blue-200 bg-blue-50">
-                  <Eye className="h-3 w-3 mr-1" />
-                  {overallStats.totalViews.toLocaleString()} Views
-                </Badge>
-                <Badge variant="outline" className="text-purple-700 border-purple-200 bg-purple-50">
-                  <TrendingUp className="h-3 w-3 mr-1" />
-                  {overallStats.weeklyGrowth}% Growth
-                </Badge>
-              </div>
+              <h1 className="text-3xl font-bold text-gray-900">Common Resources</h1>
+              <p className="mt-2 text-gray-600">
+                Manage notes, AI tools, and educational resources for all students
+              </p>
             </div>
-            
+            <div className="flex gap-3">
+              <Badge variant="outline" className="text-blue-700 border-blue-200 bg-blue-50">
+                <Download className="h-3 w-3 mr-1" />
+                {totalDownloads.toLocaleString()} Downloads
+              </Badge>
+              <Badge variant="outline" className="text-green-700 border-green-200 bg-green-50">
+                <Eye className="h-3 w-3 mr-1" />
+                {overallStats.totalViews.toLocaleString()} Views
+              </Badge>
+              <Badge variant="outline" className="text-purple-700 border-purple-200 bg-purple-50">
+                <TrendingUp className="h-3 w-3 mr-1" />
+                {overallStats.weeklyGrowth}% Growth
+              </Badge>
+            </div>
           </div>
         </div>
 
@@ -419,7 +419,7 @@ export default function CommonResourcesOverview() {
                   <div>
                     <h3 className="font-semibold text-orange-900">Pending Reviews</h3>
                     <p className="text-orange-700">
-                      <strong>{pendingApprovals}</strong> notes awaiting approval
+                      <strong>{pendingApprovals}</strong> resources awaiting approval
                     </p>
                   </div>
                 </div>
@@ -439,26 +439,11 @@ export default function CommonResourcesOverview() {
           </Card>
         )}
 
-        {/* Enhanced Summary Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+        {/* Summary Stats */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <Card className="shadow-sm hover:shadow-md transition-all duration-200 border-l-4 border-l-blue-500">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-gray-700">Total Downloads</CardTitle>
-              
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold text-gray-900 mb-1">{totalDownloads.toLocaleString()}</div>
-              <div className="flex items-center gap-1">
-                <TrendingUp className="h-3 w-3 text-green-500" />
-                <p className="text-xs text-green-600 font-medium">+12% this month</p>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="shadow-sm hover:shadow-md transition-all duration-200 border-l-4 border-l-purple-500">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium text-gray-700">Total Resources</CardTitle>
-              
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold text-gray-900 mb-1">{overallStats.totalResources}</div>
@@ -472,7 +457,6 @@ export default function CommonResourcesOverview() {
           <Card className="shadow-sm hover:shadow-md transition-all duration-200 border-l-4 border-l-green-500">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium text-gray-700">Topics</CardTitle>
-              
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold text-gray-900 mb-1">{overallStats.totalTopics}</div>
@@ -483,37 +467,36 @@ export default function CommonResourcesOverview() {
             </CardContent>
           </Card>
 
-          <Card className="shadow-sm hover:shadow-md transition-all duration-200 border-l-4 border-l-orange-500">
+          <Card className="shadow-sm hover:shadow-md transition-all duration-200 border-l-4 border-l-purple-500">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-gray-700">AI Tools</CardTitle>
-              
+              <CardTitle className="text-sm font-medium text-gray-700">Downloads</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold text-gray-900 mb-1">{aiToolStats.total_tools}</div>
+              <div className="text-3xl font-bold text-gray-900 mb-1">{totalDownloads.toLocaleString()}</div>
               <div className="flex items-center gap-1">
-                <Star className="h-3 w-3 text-yellow-500" />
-                <p className="text-xs text-gray-600">{aiToolStats.featured_tools} featured</p>
+                <TrendingUp className="h-3 w-3 text-green-500" />
+                <p className="text-xs text-green-600 font-medium">+12% this month</p>
               </div>
             </CardContent>
           </Card>
 
-          <Card className="shadow-sm hover:shadow-md transition-all duration-200 border-l-4 border-l-indigo-500">
+          <Card className="shadow-sm hover:shadow-md transition-all duration-200 border-l-4 border-l-orange-500">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-gray-700">Total Views</CardTitle>
-              
+              <CardTitle className="text-sm font-medium text-gray-700">Views</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold text-gray-900 mb-1">{overallStats.totalViews.toLocaleString()}</div>
               <div className="flex items-center gap-1">
-                <TrendingUp className="h-3 w-3 text-green-500" />
-                <p className="text-xs text-green-600 font-medium">+{overallStats.weeklyGrowth}% weekly</p>
+                <Eye className="h-3 w-3 text-blue-500" />
+                <p className="text-xs text-gray-600">All time</p>
               </div>
             </CardContent>
           </Card>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Enhanced Category Overview */}
+        {/* Categories Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Resource Categories */}
           <Card className="shadow-lg">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -535,7 +518,7 @@ export default function CommonResourcesOverview() {
                       <div>
                         <h4 className="font-semibold text-gray-900">{category.title}</h4>
                         <p className="text-sm text-gray-600">
-                          {category.topics_count} topics • {category.notes_count} resources
+                          {category.topics_count} topics • {category.notes_count} notes • {category.ai_tools_count} AI tools
                         </p>
                       </div>
                     </div>
@@ -552,23 +535,22 @@ export default function CommonResourcesOverview() {
                     <div className="flex justify-between items-center">
                       <span className="text-sm text-gray-600">Approval Rate</span>
                       <span className="text-sm font-medium">
-                        {category.notes_count > 0
-                          ? Math.round((category.active_notes / category.notes_count) * 100)
+                        {category.resources_count > 0
+                          ? Math.round((category.approved_resources / category.resources_count) * 100)
                           : 0}%
                       </span>
                     </div>
                     <Progress
-                      value={category.notes_count > 0 ? (category.active_notes / category.notes_count) * 100 : 0}
+                      value={category.resources_count > 0 ? (category.approved_resources / category.resources_count) * 100 : 0}
                       className="h-3"
                     />
                     <div className="flex justify-between text-xs">
                       <span className="text-green-600 font-medium">
                         <CheckCircle className="h-3 w-3 inline mr-1" />
-                        {category.active_notes} approved
+                        {category.approved_resources} approved
                       </span>
-                      <span className="text-orange-600 font-medium">
-                        <Clock className="h-3 w-3 inline mr-1" />
-                        {category.notes_count - category.active_notes} pending
+                      <span className="text-gray-500">
+                        {category.resources_count - category.approved_resources} pending
                       </span>
                     </div>
                   </div>
@@ -577,274 +559,42 @@ export default function CommonResourcesOverview() {
             </CardContent>
           </Card>
 
-          {/* Enhanced Recent Activity */}
+          {/* Recent Activity */}
           <Card className="shadow-lg">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Activity className="h-5 w-5 text-green-600" />
+                <Clock className="h-5 w-5 text-green-600" />
                 Recent Activity
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {recentActivity.length === 0 ? (
-                  <div className="text-center py-8">
-                    <Activity className="h-12 w-12 text-gray-300 mx-auto mb-3" />
-                    <p className="text-gray-500 font-medium">No recent activity</p>
-                    <p className="text-gray-400 text-sm">Activities will appear here when users interact with resources</p>
-                  </div>
-                ) : (
-                  recentActivity.map((activity) => (
-                    <div key={`${activity.type}-${activity.id}`} className="flex items-start space-x-3 p-3 rounded-lg hover:bg-gray-50 transition-colors">
-                      <div className={`p-2 rounded-full ${getActivityColor(activity.type)} bg-opacity-10 flex-shrink-0`}>
-                        {getActivityIcon(activity.type)}
+                {recentActivity.map((activity) => {
+                  const ActivityIcon = getActivityIcon(activity.type);
+                  return (
+                    <div key={activity.id} className="flex items-center space-x-3 p-3 rounded-lg hover:bg-gray-50 transition-colors">
+                      <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
+                        <ActivityIcon className="h-4 w-4 text-blue-600" />
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-gray-900 truncate">{activity.title}</p>
-                        <div className="flex items-center space-x-2 text-xs text-gray-500 mt-1">
-                          <Badge variant="outline" className="text-xs py-0">
-                            {activity.category}
-                          </Badge>
-                          {activity.user_name && (
-                            <>
-                              <span>•</span>
-                              <span className="font-medium">by {activity.user_name}</span>
-                            </>
-                          )}
-                          <span>•</span>
-                          <span>{formatDate(activity.created_at)}</span>
-                        </div>
+                        <p className="text-xs text-gray-500">
+                          {activity.type === 'note' ? 'Note' : 'AI Tool'} • {activity.category_id} • by {activity.uploader}
+                        </p>
                       </div>
-                      <div className="flex-shrink-0">
-                        <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
-                          <ArrowRight className="h-3 w-3" />
-                        </Button>
+                      <div className="text-xs text-gray-400">
+                        {formatDate(activity.created_at)}
                       </div>
                     </div>
-                  ))
+                  );
+                })}
+                {recentActivity.length === 0 && (
+                  <p className="text-center text-gray-500 py-8">No recent activity</p>
                 )}
               </div>
-              {recentActivity.length > 0 && (
-                <div className="pt-4 border-t border-gray-100 mt-4">
-                  <Button variant="outline" size="sm" className="w-full">
-                    View All Activity
-                    <ArrowRight className="h-4 w-4 ml-2" />
-                  </Button>
-                </div>
-              )}
             </CardContent>
           </Card>
         </div>
-
-        {/* Enhanced Resource Category Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <Card className="group hover:shadow-xl transition-all duration-300 border-0 shadow-lg bg-gradient-to-br from-blue-50 to-indigo-50">
-            <CardHeader className="pb-4">
-              <CardTitle className="flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                    <Code className="h-6 w-6 text-white" />
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-bold text-gray-900">DSA Resources</h3>
-                    <p className="text-sm text-gray-600">Data Structures & Algorithms</p>
-                  </div>
-                </div>
-                <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-200">
-                  {categoryStats.find((c) => c.id === "dsa")?.topics_count || 0} topics
-                </Badge>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0 space-y-4">
-              <p className="text-gray-600 leading-relaxed">Comprehensive collection of data structures, algorithms, and coding practice resources.</p>
-
-              <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-blue-100">
-                <div className="flex items-center gap-2">
-                  <FileText className="h-4 w-4 text-blue-600" />
-                  <span className="font-semibold text-blue-900">
-                    {categoryStats.find((c) => c.id === "dsa")?.notes_count || 0} Resources
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 text-sm text-gray-600">
-                  <Download className="h-4 w-4" />
-                  {categoryStats.find((c) => c.id === "dsa")?.downloads || 0} downloads
-                </div>
-              </div>
-
-              <Button className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 group-hover:shadow-md transition-all" asChild>
-                <Link href="/dashboard/common-resources/dsa">
-                  Manage DSA Resources
-                  <ArrowRight className="h-4 w-4 ml-2 group-hover:translate-x-1 transition-transform" />
-                </Link>
-              </Button>
-            </CardContent>
-          </Card>
-
-          <Card className="group hover:shadow-xl transition-all duration-300 border-0 shadow-lg bg-gradient-to-br from-green-50 to-emerald-50">
-            <CardHeader className="pb-4">
-              <CardTitle className="flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                    <Grid3X3 className="h-6 w-6 text-white" />
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-bold text-gray-900">Development</h3>
-                    <p className="text-sm text-gray-600">Web, Mobile & Backend</p>
-                  </div>
-                </div>
-                <Badge className="bg-green-100 text-green-700 hover:bg-green-200">
-                  {categoryStats.find((c) => c.id === "development")?.topics_count || 0} topics
-                </Badge>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0 space-y-4">
-              <p className="text-gray-600 leading-relaxed">Modern development frameworks, tools, and best practices for building applications.</p>
-
-              <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-green-100">
-                <div className="flex items-center gap-2">
-                  <FileText className="h-4 w-4 text-green-600" />
-                  <span className="font-semibold text-green-900">
-                    {categoryStats.find((c) => c.id === "development")?.notes_count || 0} Resources
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 text-sm text-gray-600">
-                  <Download className="h-4 w-4" />
-                  {categoryStats.find((c) => c.id === "development")?.downloads || 0} downloads
-                </div>
-              </div>
-
-              <Button className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 group-hover:shadow-md transition-all" asChild>
-                <Link href="/dashboard/common-resources/development">
-                  Manage Development Resources
-                  <ArrowRight className="h-4 w-4 ml-2 group-hover:translate-x-1 transition-transform" />
-                </Link>
-              </Button>
-            </CardContent>
-          </Card>
-
-          <Card className="group hover:shadow-xl transition-all duration-300 border-0 shadow-lg bg-gradient-to-br from-purple-50 to-violet-50">
-            <CardHeader className="pb-4">
-              <CardTitle className="flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-purple-500 to-violet-600 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                    <Target className="h-6 w-6 text-white" />
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-bold text-gray-900">Placement Prep</h3>
-                    <p className="text-sm text-gray-600">Interview & Career</p>
-                  </div>
-                </div>
-                <Badge className="bg-purple-100 text-purple-700 hover:bg-purple-200">
-                  {categoryStats.find((c) => c.id === "placement")?.topics_count || 0} topics
-                </Badge>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0 space-y-4">
-              <p className="text-gray-600 leading-relaxed">Interview preparation, resume building, and career guidance resources.</p>
-
-              <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-purple-100">
-                <div className="flex items-center gap-2">
-                  <FileText className="h-4 w-4 text-purple-600" />
-                  <span className="font-semibold text-purple-900">
-                    {categoryStats.find((c) => c.id === "placement")?.notes_count || 0} Resources
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 text-sm text-gray-600">
-                  <Download className="h-4 w-4" />
-                  {categoryStats.find((c) => c.id === "placement")?.downloads || 0} downloads
-                </div>
-              </div>
-
-              <Button className="w-full bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-700 hover:to-violet-700 group-hover:shadow-md transition-all" asChild>
-                <Link href="/dashboard/common-resources/placement">
-                  Manage Placement Resources
-                  <ArrowRight className="h-4 w-4 ml-2 group-hover:translate-x-1 transition-transform" />
-                </Link>
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* AI Tools Showcase */}
-        <Card className="group hover:shadow-xl transition-all duration-300 border-0 shadow-lg bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 overflow-hidden">
-          <CardHeader className="pb-6 relative">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-indigo-200 to-purple-200 rounded-full blur-3xl opacity-30 -translate-y-16 translate-x-16"></div>
-            <CardTitle className="flex items-center justify-between relative z-10">
-              <div className="flex items-center space-x-4">
-                <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                  <Bot className="h-7 w-7 text-white" />
-                </div>
-                <div>
-                  <h2 className="text-2xl font-bold text-gray-900">AI Tools Hub</h2>
-                  <p className="text-gray-600 font-normal">Productivity & Learning Tools</p>
-                </div>
-              </div>
-              <Button className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-700 hover:via-purple-700 hover:to-pink-700 shadow-lg group-hover:shadow-xl transition-all" asChild>
-                <Link href="/dashboard/common-resources/ai-tools">
-                  Manage AI Tools
-                  <ArrowRight className="h-4 w-4 ml-2 group-hover:translate-x-1 transition-transform" />
-                </Link>
-              </Button>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              <div className="group/stat hover:scale-105 transition-transform">
-                <div className="text-center p-4 bg-white rounded-xl border border-purple-100 shadow-sm hover:shadow-md transition-shadow">
-                  <div className="w-10 h-10 rounded-lg bg-gradient-to-r from-purple-500 to-indigo-500 flex items-center justify-center mx-auto mb-2">
-                    <BarChart3 className="h-5 w-5 text-white" />
-                  </div>
-                  <div className="text-2xl font-bold text-purple-600 mb-1">{aiToolStats.total_tools}</div>
-                  <div className="text-sm text-purple-700 font-medium">Total Tools</div>
-                </div>
-              </div>
-              <div className="group/stat hover:scale-105 transition-transform">
-                <div className="text-center p-4 bg-white rounded-xl border border-green-100 shadow-sm hover:shadow-md transition-shadow">
-                  <div className="w-10 h-10 rounded-lg bg-gradient-to-r from-green-500 to-emerald-500 flex items-center justify-center mx-auto mb-2">
-                    <CheckCircle className="h-5 w-5 text-white" />
-                  </div>
-                  <div className="text-2xl font-bold text-green-600 mb-1">{aiToolStats.active_tools}</div>
-                  <div className="text-sm text-green-700 font-medium">Active</div>
-                </div>
-              </div>
-              <div className="group/stat hover:scale-105 transition-transform">
-                <div className="text-center p-4 bg-white rounded-xl border border-blue-100 shadow-sm hover:shadow-md transition-shadow">
-                  <div className="w-10 h-10 rounded-lg bg-gradient-to-r from-blue-500 to-cyan-500 flex items-center justify-center mx-auto mb-2">
-                    <Star className="h-5 w-5 text-white" />
-                  </div>
-                  <div className="text-2xl font-bold text-blue-600 mb-1">{aiToolStats.featured_tools}</div>
-                  <div className="text-sm text-blue-700 font-medium">Featured</div>
-                </div>
-              </div>
-              <div className="group/stat hover:scale-105 transition-transform">
-                <div className="text-center p-4 bg-white rounded-xl border border-orange-100 shadow-sm hover:shadow-md transition-shadow">
-                  <div className="w-10 h-10 rounded-lg bg-gradient-to-r from-orange-500 to-red-500 flex items-center justify-center mx-auto mb-2">
-                    <Zap className="h-5 w-5 text-white" />
-                  </div>
-                  <div className="text-2xl font-bold text-orange-600 mb-1">{aiToolStats.premium_tools}</div>
-                  <div className="text-sm text-orange-700 font-medium">Premium</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-xl p-4 border border-indigo-100">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-gradient-to-r from-indigo-500 to-purple-500 flex items-center justify-center">
-                    <Users className="h-4 w-4 text-white" />
-                  </div>
-                  <div>
-                    <p className="font-semibold text-gray-900">Categories Available</p>
-                    <p className="text-sm text-gray-600">{aiToolStats.categories_count} different tool categories</p>
-                  </div>
-                </div>
-                <Badge className="bg-indigo-100 text-indigo-700 hover:bg-indigo-200">
-                  {aiToolStats.categories_count} Categories
-                </Badge>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
       </div>
     </DashboardLayout>
   );

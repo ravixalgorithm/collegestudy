@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "HBTU Study",
+    "name": "College Study",
     "slug": "hbtu-college-study",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -17,7 +17,7 @@
     "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.hbtu.collegestudy",
+      "bundleIdentifier": "com.collegestudy",
       "infoPlist": {
         "UIBackgroundModes": ["background-fetch", "background-processing"],
         "NSCameraUsageDescription": "This app uses the camera to upload profile pictures and documents.",
@@ -25,7 +25,7 @@
       }
     },
     "android": {
-      "package": "com.hbtu.collegestudy",
+      "package": "com.collegestudy",
       "permissions": [
         "CAMERA",
         "READ_EXTERNAL_STORAGE",

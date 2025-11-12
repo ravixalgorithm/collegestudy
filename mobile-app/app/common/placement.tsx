@@ -9,148 +9,103 @@ import {
   StatusBar,
   RefreshControl,
   Alert,
+  ActivityIndicator,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { supabase } from "../../src/lib/supabase";
-import {
-  ArrowLeft,
-  Target,
-  Briefcase,
-  FileText,
-  MessageCircle,
-  TrendingUp,
-  Star,
-  Clock,
-  Users,
-  Download,
-  ExternalLink,
-  BookOpen,
-  Award,
-  CheckCircle,
-  ArrowRight,
-} from "lucide-react-native";
+import { ArrowLeft, Target, FileText, ExternalLink, TrendingUp, Clock, Users, Star, Download, Eye } from "lucide-react-native";
 
-interface PlacementCategory {
+// Updated interfaces for unified schema
+interface Topic {
   id: string;
+  category_id: string;
   title: string;
   description: string;
-  difficulty: 'Beginner' | 'Intermediate' | 'Advanced';
-  notes: PlacementNote[];
-  topics: string[];
-}
-
-interface PlacementNote {
-  id: string;
-  title: string;
-  description: string;
-  file_url: string;
-  uploaded_by: string;
+  difficulty: "Beginner" | "Easy" | "Medium" | "Hard";
+  sort_order: number;
+  is_active: boolean;
   created_at: string;
-  downloads: number;
-  rating: number;
+  updated_at: string;
+  notes: Resource[];
 }
 
-const PLACEMENT_CATEGORIES: PlacementCategory[] = [
-  {
-    id: "resume-cv",
-    title: "Resume & CV",
-    description: "Create compelling resumes that get noticed by recruiters",
-    difficulty: "Beginner",
-    notes: [],
-    topics: ["Format", "Content", "Keywords", "ATS Optimization"],
-  },
-  {
-    id: "technical-interviews",
-    title: "Technical Interviews",
-    description: "Master coding interviews and technical assessments",
-    difficulty: "Intermediate",
-    notes: [],
-    topics: ["Coding", "System Design", "Algorithms", "Data Structures"],
-  },
-  {
-    id: "hr-interviews",
-    title: "HR & Behavioral",
-    description: "Excel in behavioral and HR interview rounds",
-    difficulty: "Beginner",
-    notes: [],
-    topics: ["Communication", "Leadership", "STAR Method", "Questions"],
-  },
-  {
-    id: "company-specific",
-    title: "Company-Specific Prep",
-    description: "Target preparation for top tech companies",
-    difficulty: "Advanced",
-    notes: [],
-    topics: ["FAANG", "Startups", "Culture Fit", "Company Research"],
-  },
-  {
-    id: "mock-interviews",
-    title: "Mock Interview Tips",
-    description: "Practice sessions and feedback strategies",
-    difficulty: "Intermediate",
-    notes: [],
-    topics: ["Practice", "Feedback", "Confidence", "Performance"],
-  },
-  {
-    id: "salary-negotiation",
-    title: "Salary Negotiation",
-    description: "Get the best offer and negotiate effectively",
-    difficulty: "Advanced",
-    notes: [],
-    topics: ["Research", "Negotiation", "Benefits", "Counter Offers"],
-  },
-];
+interface Resource {
+  id: string;
+  category_id: string;
+  topic_id: string;
+  title: string;
+  description: string;
+  resource_type: 'note' | 'ai_tool';
+  file_url?: string;
+  file_type?: string;
+  file_size?: string;
+  tool_url?: string;
+  pricing_type?: string;
+  tags: string[];
+  thumbnail_url?: string;
+  downloads: number;
+  views: number;
+  rating: number;
+  rating_count: number;
+  is_featured: boolean;
+  is_approved: boolean;
+  is_active: boolean;
+  uploaded_by?: string;
+  created_at: string;
+  updated_at: string;
+}
 
-const SUCCESS_TIPS = [
-  {
-    title: "Start Early",
-    description: "Begin preparation at least 6 months before placement season",
-  },
-  {
-    title: "Build Projects",
-    description: "Create 2-3 impressive projects that demonstrate your skills",
-  },
-  {
-    title: "Practice Daily",
-    description: "Solve coding problems and practice interview questions daily",
-  },
-  {
-    title: "Network Actively",
-    description: "Connect with alumni and industry professionals on LinkedIn",
-  },
-];
-
-export default function PlacementPreparation() {
+export default function PlacementNotes() {
   const router = useRouter();
-  const [categories, setCategories] = useState<PlacementCategory[]>(PLACEMENT_CATEGORIES);
-  const [loading, setLoading] = useState(false);
+  const [topics, setTopics] = useState<Topic[]>([]);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
-    loadNotes();
+    loadTopicsAndNotes();
   }, []);
 
-  const loadNotes = async () => {
+  const loadTopicsAndNotes = async () => {
     try {
       setLoading(true);
-      // Load notes from database
-      const { data, error } = await supabase
-        .from("common_notes")
-        .select("id, title, description, category_id, topic_id, file_url, file_type, file_size, thumbnail_url, uploaded_by, approved_by, downloads, views, rating, rating_count, is_verified, is_featured, is_approved, tags, meta_data, created_at, updated_at")
+
+      // Load topics for Placement category using unified schema
+      const { data: topicsData, error: topicsError } = await supabase
+        .from("topics")
+        .select("*")
         .eq("category_id", "placement")
-        .order("created_at", { ascending: false });
+        .eq("is_active", true)
+        .order("sort_order");
 
-      if (error) throw error;
+      if (topicsError) throw topicsError;
 
-      // Group notes by category
-      const updatedCategories = categories.map(category => ({
-        ...category,
-        notes: data?.filter(note => note.topic_id === category.id) || []
-      }));
+      // Load notes for each topic using unified resources table
+      const topicsWithNotes = await Promise.all(
+        (topicsData || []).map(async (topic) => {
+          const { data: notesData, error: notesError } = await supabase
+            .from("resources")
+            .select("*")
+            .eq("topic_id", topic.id)
+            .eq("resource_type", "note")
+            .eq("is_approved", true)
+            .eq("is_active", true)
+            .order("created_at", { ascending: false });
 
-      setCategories(updatedCategories);
+          if (notesError) {
+            console.log("No notes found for topic:", topic.title);
+          }
+
+          return {
+            ...topic,
+            notes: notesData || [],
+          };
+        }),
+      );
+
+      setTopics(topicsWithNotes);
     } catch (error) {
-      console.error("Error loading placement notes:", error);
+      console.log("Could not load Placement content - may be empty or permission restricted");
+      // Don't show alert for empty data - just show empty state
     } finally {
       setLoading(false);
     }
@@ -158,227 +113,197 @@ export default function PlacementPreparation() {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadNotes();
+    await loadTopicsAndNotes();
     setRefreshing(false);
+  };
+
+  const handleDownload = async (note: Resource) => {
+    try {
+      if (note.file_url) {
+        // Update download count
+        await supabase
+          .from("resources")
+          .update({ downloads: (note.downloads || 0) + 1 })
+          .eq("id", note.id);
+
+        // Open the file URL
+        const { Linking } = require("react-native");
+        await Linking.openURL(note.file_url);
+        
+        // Refresh data to show updated download count
+        loadTopicsAndNotes();
+      }
+    } catch (error) {
+      console.error("Error downloading file:", error);
+      Alert.alert("Error", "Failed to download file. Please try again.");
+    }
   };
 
   const getDifficultyColor = (difficulty: string) => {
     switch (difficulty) {
-      case "Beginner": return "#52c41a";
-      case "Intermediate": return "#fa8c16";
-      case "Advanced": return "#ff4d4f";
-      default: return "#666";
+      case "Beginner":
+        return "#10B981"; // Green
+      case "Easy":
+        return "#3B82F6"; // Blue
+      case "Medium":
+        return "#F59E0B"; // Yellow
+      case "Hard":
+        return "#EF4444"; // Red
+      default:
+        return "#6B7280"; // Gray
     }
   };
 
-  const handleCategoryPress = (category: PlacementCategory) => {
-    router.push({
-      pathname: "/common/notes/[category]",
-      params: {
-        category: "placement",
-        topicId: category.id,
-        topicTitle: category.title,
-        topicDescription: category.description
-      }
-    });
+  const formatFileSize = (size?: string) => {
+    return size || "Unknown size";
   };
+
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString();
+  };
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#F59E0B" />
+          <Text style={styles.loadingText}>Loading Placement resources...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
-
+      
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => router.back()}
-        >
-          <ArrowLeft color="#333" size={24} />
+        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <ArrowLeft size={24} color="#374151" />
         </TouchableOpacity>
         <View style={styles.headerContent}>
-          <Text style={styles.headerTitle}>Placement Prep</Text>
-          <Text style={styles.headerSubtitle}>Interview & Resume Tips</Text>
+          <View style={styles.headerIcon}>
+            <Target size={28} color="#F59E0B" />
+          </View>
+          <View>
+            <Text style={styles.headerTitle}>Placement Preparation</Text>
+            <Text style={styles.headerSubtitle}>{topics.length} topics available</Text>
+          </View>
         </View>
-        <View style={styles.placeholder} />
       </View>
 
       <ScrollView
-        style={styles.scrollView}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
+        style={styles.content}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        {/* Hero Section */}
-        <View style={styles.heroSection}>
-          <View style={styles.heroIcon}>
-            <Target color="#722ed1" size={32} />
-          </View>
-          <Text style={styles.heroTitle}>Land Your Dream Job</Text>
-          <Text style={styles.heroDescription}>
-            Comprehensive placement preparation covering resume building, technical interviews, HR rounds, and salary negotiation strategies.
-          </Text>
-
-          <View style={styles.statsRow}>
-            <View style={styles.statItem}>
-              <Text style={styles.statNumber}>95%</Text>
-              <Text style={styles.statLabel}>Success Rate</Text>
-            </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statItem}>
-              <Text style={styles.statNumber}>500+</Text>
-              <Text style={styles.statLabel}>Placed Students</Text>
-            </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statItem}>
-              <Text style={styles.statNumber}>50+</Text>
-              <Text style={styles.statLabel}>Companies</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Success Tips */}
-        <View style={styles.tipsSection}>
-          <Text style={styles.sectionTitle}>Keys to Success</Text>
-          <Text style={styles.sectionSubtitle}>
-            Follow these proven strategies for placement success
-          </Text>
-
-          <View style={styles.tipsGrid}>
-            {SUCCESS_TIPS.map((tip, index) => (
-              <View key={index} style={styles.tipCard}>
-                <View style={styles.tipIcon}>
-                  <CheckCircle color="#1890ff" size={20} />
-                </View>
-                <Text style={styles.tipTitle}>{tip.title}</Text>
-                <Text style={styles.tipDescription}>{tip.description}</Text>
+        {topics.map((topic) => (
+          <View key={topic.id} style={styles.topicCard}>
+            <View style={styles.topicHeader}>
+              <View style={styles.topicInfo}>
+                <Text style={styles.topicTitle}>{topic.title}</Text>
+                <Text style={styles.topicDescription}>{topic.description}</Text>
               </View>
-            ))}
-          </View>
-        </View>
+              <View style={[styles.difficultyBadge, { backgroundColor: getDifficultyColor(topic.difficulty) }]}>
+                <Text style={styles.difficultyText}>{topic.difficulty}</Text>
+              </View>
+            </View>
 
-        {/* Preparation Categories */}
-        <View style={styles.categoriesSection}>
-          <Text style={styles.sectionTitle}>Preparation Categories</Text>
-          <Text style={styles.sectionSubtitle}>
-            Master every aspect of the placement process
-          </Text>
+            <View style={styles.topicStats}>
+              <View style={styles.statItem}>
+                <FileText size={16} color="#6B7280" />
+                <Text style={styles.statText}>{topic.notes.length} notes</Text>
+              </View>
+              <View style={styles.statItem}>
+                <Download size={16} color="#6B7280" />
+                <Text style={styles.statText}>
+                  {topic.notes.reduce((sum, note) => sum + (note.downloads || 0), 0)} downloads
+                </Text>
+              </View>
+            </View>
 
-          <View style={styles.categoriesGrid}>
-            {categories.map((category) => (
-              <TouchableOpacity
-                key={category.id}
-                style={styles.categoryCard}
-                onPress={() => handleCategoryPress(category)}
-              >
-                
-
-                <View style={styles.categoryContent}>
-                  <Text style={styles.categoryTitle}>{category.title}</Text>
-                  <Text style={styles.categoryDescription}>{category.description}</Text>
-
-                  <View style={styles.topicsContainer}>
-                    {category.topics.slice(0, 3).map((topic, index) => (
-                      <View key={index} style={styles.topicBadge}>
-                        <Text style={styles.topicText}>{topic}</Text>
+            {topic.notes.length > 0 ? (
+              <View style={styles.notesContainer}>
+                {topic.notes.map((note) => (
+                  <TouchableOpacity
+                    key={note.id}
+                    style={styles.noteCard}
+                    onPress={() => handleDownload(note)}
+                  >
+                    <View style={styles.noteHeader}>
+                      <View style={styles.noteInfo}>
+                        <Text style={styles.noteTitle}>{note.title}</Text>
+                        <Text style={styles.noteDescription} numberOfLines={2}>
+                          {note.description}
+                        </Text>
                       </View>
-                    ))}
-                    {category.topics.length > 3 && (
-                      <View style={styles.topicBadge}>
-                        <Text style={styles.topicText}>+{category.topics.length - 3}</Text>
+                      {note.is_featured && (
+                        <View style={styles.featuredBadge}>
+                          <Star size={12} color="#F59E0B" />
+                        </View>
+                      )}
+                    </View>
+
+                    <View style={styles.noteDetails}>
+                      <View style={styles.noteMetadata}>
+                        <Text style={styles.fileType}>{note.file_type?.toUpperCase()}</Text>
+                        <Text style={styles.fileSize}>{formatFileSize(note.file_size)}</Text>
+                      </View>
+                      <View style={styles.noteStats}>
+                        <View style={styles.statItem}>
+                          <Download size={14} color="#6B7280" />
+                          <Text style={styles.statValue}>{note.downloads}</Text>
+                        </View>
+                        <View style={styles.statItem}>
+                          <Eye size={14} color="#6B7280" />
+                          <Text style={styles.statValue}>{note.views}</Text>
+                        </View>
+                        {note.rating > 0 && (
+                          <View style={styles.statItem}>
+                            <Star size={14} color="#F59E0B" />
+                            <Text style={styles.statValue}>{note.rating.toFixed(1)}</Text>
+                          </View>
+                        )}
+                      </View>
+                    </View>
+
+                    {note.tags && note.tags.length > 0 && (
+                      <View style={styles.tagsContainer}>
+                        {note.tags.slice(0, 3).map((tag, index) => (
+                          <View key={index} style={styles.tag}>
+                            <Text style={styles.tagText}>{tag}</Text>
+                          </View>
+                        ))}
+                        {note.tags.length > 3 && (
+                          <Text style={styles.moreTagsText}>+{note.tags.length - 3} more</Text>
+                        )}
                       </View>
                     )}
-                  </View>
-                  
-                  <View style={[styles.difficultyBadge, { backgroundColor: getDifficultyColor(category.difficulty) }]}>
-                    <Text style={styles.difficultyText}>{category.difficulty}</Text>
-                  </View>
 
-                  <View style={styles.categoryStats}>
-                    <View style={styles.categoryStat}>
-                      <FileText color="#666" size={14} />
-                      <Text style={styles.categoryStatText}>{category.notes.length} Resources</Text>
+                    <View style={styles.downloadButton}>
+                      <ExternalLink size={16} color="#F59E0B" />
+                      <Text style={styles.downloadButtonText}>Download</Text>
                     </View>
-                    <View style={styles.categoryStat}>
-                      <Star color="#fa8c16" size={14} />
-                      <Text style={styles.categoryStatText}>Popular</Text>
-                    </View>
-                  </View>
-                </View>
-
-                <View style={styles.categoryFooter}>
-                  <Text style={styles.exploreText}>Explore</Text>
-                  <ArrowRight color="#1890ff" size={16} />
-                </View>
-              </TouchableOpacity>
-            ))}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : (
+              <View style={styles.emptyState}>
+                <FileText size={48} color="#D1D5DB" />
+                <Text style={styles.emptyStateText}>No notes available for this topic</Text>
+              </View>
+            )}
           </View>
-        </View>
+        ))}
 
-        {/* Timeline Section */}
-        <View style={styles.timelineSection}>
-          <Text style={styles.sectionTitle}>Placement Timeline</Text>
-          <Text style={styles.sectionSubtitle}>
-            Plan your preparation with this comprehensive timeline
-          </Text>
-
-          <View style={styles.timeline}>
-            <View style={styles.timelineStep}>
-              <View style={styles.stepIndicator}>
-                <Text style={styles.stepNumber}>6M</Text>
-              </View>
-              <View style={styles.stepContent}>
-                <Text style={styles.stepTitle}>Start Preparation</Text>
-                <Text style={styles.stepDescription}>
-                  Build fundamentals, create resume, start coding practice
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.timelineConnector} />
-
-            <View style={styles.timelineStep}>
-              <View style={styles.stepIndicator}>
-                <Text style={styles.stepNumber}>3M</Text>
-              </View>
-              <View style={styles.stepContent}>
-                <Text style={styles.stepTitle}>Intensive Practice</Text>
-                <Text style={styles.stepDescription}>
-                  Mock interviews, project completion, skill enhancement
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.timelineConnector} />
-
-            <View style={styles.timelineStep}>
-              <View style={styles.stepIndicator}>
-                <Text style={styles.stepNumber}>1M</Text>
-              </View>
-              <View style={styles.stepContent}>
-                <Text style={styles.stepTitle}>Final Preparation</Text>
-                <Text style={styles.stepDescription}>
-                  Company research, resume finalization, interview practice
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.timelineConnector} />
-
-            <View style={styles.timelineStep}>
-              <View style={[styles.stepIndicator, { backgroundColor: "#52c41a" }]}>
-                <Text style={[styles.stepNumber, { color: "#ffffff" }]}>GO!</Text>
-              </View>
-              <View style={styles.stepContent}>
-                <Text style={styles.stepTitle}>Placement Season</Text>
-                <Text style={styles.stepDescription}>
-                  Apply confidence, ace interviews, land your dream job
-                </Text>
-              </View>
-            </View>
+        {topics.length === 0 && (
+          <View style={styles.emptyState}>
+            <Target size={64} color="#D1D5DB" />
+            <Text style={styles.emptyStateTitle}>No Placement Topics Found</Text>
+            <Text style={styles.emptyStateText}>Check back later for new content</Text>
           </View>
-        </View>
-
-        <View style={styles.bottomSpacing} />
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -387,326 +312,237 @@ export default function PlacementPreparation() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f8f9fa",
+    backgroundColor: "#F9FAFB",
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: "#6B7280",
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: "#ffffff",
+    padding: 16,
+    backgroundColor: "#FFFFFF",
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
+    borderBottomColor: "#E5E7EB",
   },
   backButton: {
+    marginRight: 16,
     padding: 8,
   },
   headerContent: {
-    flex: 1,
+    flexDirection: "row",
     alignItems: "center",
+    flex: 1,
+  },
+  headerIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: "#FEF3C7",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
   },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#333",
+    fontSize: 20,
+    fontWeight: "600",
+    color: "#111827",
   },
   headerSubtitle: {
     fontSize: 14,
-    color: "#666",
+    color: "#6B7280",
     marginTop: 2,
   },
-  placeholder: {
-    width: 40,
-  },
-  scrollView: {
+  content: {
     flex: 1,
+    padding: 16,
   },
-  heroSection: {
-    backgroundColor: "#ffffff",
-    margin: 16,
-    borderRadius: 20,
-    padding: 24,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#f0f0f0",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  heroIcon: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: "#f9f0ff",
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 16,
-  },
-  heroTitle: {
-    fontSize: 22,
-    fontWeight: "700",
-    color: "#333",
-    textAlign: "center",
-    marginBottom: 8,
-  },
-  heroDescription: {
-    fontSize: 16,
-    color: "#666",
-    textAlign: "center",
-    lineHeight: 24,
-    marginBottom: 24,
-  },
-  statsRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#f8f9fa",
+  topicCard: {
+    backgroundColor: "#FFFFFF",
     borderRadius: 12,
     padding: 16,
-    width: "100%",
+    marginBottom: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
-  statItem: {
+  topicHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 12,
+  },
+  topicInfo: {
     flex: 1,
-    alignItems: "center",
+    marginRight: 12,
   },
-  statNumber: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#722ed1",
-    marginBottom: 4,
-  },
-  statLabel: {
-    fontSize: 12,
-    color: "#666",
-    fontWeight: "500",
-  },
-  statDivider: {
-    width: 1,
-    height: 30,
-    backgroundColor: "#e5e7eb",
-    marginHorizontal: 16,
-  },
-  tipsSection: {
-    margin: 16,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#333",
-    marginBottom: 4,
-  },
-  sectionSubtitle: {
-    fontSize: 14,
-    color: "#666",
-    marginBottom: 20,
-  },
-  tipsGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  tipCard: {
-    width: "48%",
-    backgroundColor: "#ffffff",
-    borderRadius: 16,
-    padding: 16,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#f0f0f0",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  tipIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#1890ff15",
-  },
-  tipTitle: {
-    fontSize: 14,
+  topicTitle: {
+    fontSize: 18,
     fontWeight: "600",
-    color: "#333",
-    textAlign: "center",
+    color: "#111827",
     marginBottom: 4,
   },
-  tipDescription: {
-    fontSize: 12,
-    color: "#666",
-    textAlign: "center",
-    lineHeight: 16,
-  },
-  categoriesSection: {
-    margin: 16,
-    marginTop: 8,
-  },
-  categoriesGrid: {
-    gap: 16,
-  },
-  categoryCard: {
-    backgroundColor: "#ffffff",
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#f0f0f0",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-    overflow: "hidden",
-  },
-  categoryHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: 16,
-    backgroundColor: "#1890ff15",
-  },
-  categoryIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#1890ff",
+  topicDescription: {
+    fontSize: 14,
+    color: "#6B7280",
+    lineHeight: 20,
   },
   difficultyBadge: {
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 12,
-    maxWidth: 80,
-    marginBottom: 10
+    borderRadius: 6,
   },
   difficultyText: {
-    fontSize: 10,
-    fontWeight: "600",
-    color: "#ffffff",
-    textAlign: "center",
+    fontSize: 12,
+    fontWeight: "500",
+    color: "#FFFFFF",
   },
-  categoryContent: {
-    padding: 16,
-    
+  topicStats: {
+    flexDirection: "row",
+    marginBottom: 16,
   },
-  categoryTitle: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#333",
+  statItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginRight: 16,
+  },
+  statText: {
+    fontSize: 14,
+    color: "#6B7280",
+    marginLeft: 4,
+  },
+  statValue: {
+    fontSize: 12,
+    color: "#6B7280",
+    marginLeft: 4,
+  },
+  notesContainer: {
+    gap: 12,
+  },
+  noteCard: {
+    backgroundColor: "#F9FAFB",
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  noteHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 8,
+  },
+  noteInfo: {
+    flex: 1,
+    marginRight: 8,
+  },
+  noteTitle: {
+    fontSize: 16,
+    fontWeight: "500",
+    color: "#111827",
     marginBottom: 4,
   },
-  categoryDescription: {
+  noteDescription: {
     fontSize: 14,
-    color: "#666",
-    lineHeight: 20,
-    marginBottom: 12,
+    color: "#6B7280",
+    lineHeight: 18,
   },
-  topicsContainer: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 6,
-    marginBottom: 12,
-  },
-  topicBadge: {
-    backgroundColor: "#f0f2f5",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  topicText: {
-    fontSize: 11,
-    fontWeight: "500",
-    color: "#666",
-  },
-  categoryStats: {
-    flexDirection: "row",
-    gap: 16,
-  },
-  categoryStat: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-  categoryStatText: {
-    fontSize: 12,
-    color: "#666",
-    fontWeight: "500",
-  },
-  categoryFooter: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: 16,
-    backgroundColor: "#f8f9fa",
-    borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
-  },
-  exploreText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#666",
-  },
-  timelineSection: {
-    margin: 16,
-    marginTop: 8,
-  },
-  timeline: {
-    backgroundColor: "#ffffff",
-    borderRadius: 16,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: "#f0f0f0",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  timelineStep: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 16,
-  },
-  stepIndicator: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#f0f2f5",
+  featuredBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "#FEF3C7",
     justifyContent: "center",
     alignItems: "center",
   },
-  stepNumber: {
+  noteDetails: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  noteMetadata: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  fileType: {
     fontSize: 12,
-    fontWeight: "600",
-    color: "#666",
+    fontWeight: "500",
+    color: "#F59E0B",
+    backgroundColor: "#FEF3C7",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginRight: 8,
   },
-  stepContent: {
-    flex: 1,
+  fileSize: {
+    fontSize: 12,
+    color: "#6B7280",
   },
-  stepTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#333",
-    marginBottom: 2,
+  noteStats: {
+    flexDirection: "row",
+    alignItems: "center",
   },
-  stepDescription: {
+  tagsContainer: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginBottom: 8,
+  },
+  tag: {
+    backgroundColor: "#E5E7EB",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginRight: 4,
+    marginBottom: 4,
+  },
+  tagText: {
+    fontSize: 10,
+    color: "#374151",
+  },
+  moreTagsText: {
+    fontSize: 10,
+    color: "#6B7280",
+    alignSelf: "center",
+  },
+  downloadButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FEF3C7",
+    paddingVertical: 8,
+    borderRadius: 6,
+  },
+  downloadButtonText: {
     fontSize: 14,
-    color: "#666",
-    lineHeight: 20,
+    fontWeight: "500",
+    color: "#F59E0B",
+    marginLeft: 4,
   },
-  timelineConnector: {
-    width: 2,
-    height: 24,
-    backgroundColor: "#e5e7eb",
-    marginLeft: 19,
-    marginVertical: 12,
+  emptyState: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 32,
   },
-  bottomSpacing: {
-    height: 32,
+  emptyStateTitle: {
+    fontSize: 18,
+    fontWeight: "500",
+    color: "#374151",
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  emptyStateText: {
+    fontSize: 14,
+    color: "#6B7280",
+    textAlign: "center",
   },
 });

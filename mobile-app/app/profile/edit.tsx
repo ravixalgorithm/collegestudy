@@ -944,7 +944,7 @@ export default function EditProfile() {
                     }}
                   >
                     <Text style={[styles.pickerItemCode, !branch.is_active && styles.pickerItemTextDisabled]}>
-                      {branch.code}
+                      {branch.code}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
                     </Text>
                     <View style={styles.pickerItemContent}>
                       <Text style={[styles.pickerItemName, !branch.is_active && styles.pickerItemTextDisabled]}>

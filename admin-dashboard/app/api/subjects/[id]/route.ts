@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
 
-export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const subjectId = params.id;
+    const { id: subjectId } = await params;
 
     if (!subjectId) {
       return NextResponse.json({ error: "Subject ID is required" }, { status: 400 });

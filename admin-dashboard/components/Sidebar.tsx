@@ -19,6 +19,7 @@ import {
   Monitor,
   Target,
   Bot,
+  Info,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
@@ -27,12 +28,13 @@ const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { name: "Analytics", href: "/dashboard/analytics", icon: BarChart3 },
   { name: "Notes", href: "/dashboard/notes", icon: FileText },
+  { name: "Subjects", href: "/dashboard/subjects", icon: BookOpen },
   { name: "Timetable", href: "/dashboard/timetable", icon: Clock },
   { name: "Events", href: "/dashboard/events", icon: Calendar },
   { name: "Opportunities", href: "/dashboard/opportunities", icon: Briefcase },
   { name: "Notifications", href: "/dashboard/notifications", icon: Bell },
   { name: "Users", href: "/dashboard/users", icon: Users },
-  { name: "Branches", href: "/dashboard/branches", icon: BookOpen },
+  { name: "Branches", href: "/dashboard/branches", icon: Target },
 ];
 
 const commonResourcesNavigation = [
@@ -121,11 +123,11 @@ export default function Sidebar() {
       {/* Bottom Section */}
       <div className="border-t border-gray-200 p-3 space-y-1">
         <Link
-          href="/dashboard/settings"
+          href="/dashboard/about"
           className="group flex items-center space-x-3 px-3 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 hover:text-gray-900 rounded-lg transition-all"
         >
-          <Settings className="w-5 h-5 text-gray-400 group-hover:text-gray-600" />
-          <span>Settings</span>
+          <Info className="w-5 h-5 text-gray-400 group-hover:text-gray-600" />
+          <span>About</span>
         </Link>
         <button
           onClick={handleLogout}

@@ -15,36 +15,49 @@ import { useRouter } from "expo-router";
 import { supabase } from "../../src/lib/supabase";
 import { ArrowLeft, Code, FileText, ExternalLink, TrendingUp, Target, Clock, Users, Star, Download, Eye } from "lucide-react-native";
 
-interface DSATopic {
+// Updated interfaces for unified schema
+interface Topic {
   id: string;
+  category_id: string;
   title: string;
   description: string;
-  difficulty: "Easy" | "Medium" | "Hard";
-  notes: DSANote[];
+  difficulty: "Beginner" | "Easy" | "Medium" | "Hard";
+  sort_order: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  notes: Resource[];
 }
 
-interface DSANote {
+interface Resource {
   id: string;
+  category_id: string;
+  topic_id: string;
   title: string;
   description: string;
-  file_url: string;
-  file_type: string;
+  resource_type: 'note' | 'ai_tool';
+  file_url?: string;
+  file_type?: string;
   file_size?: string;
-  is_featured: boolean;
-  is_approved: boolean;
-  is_verified: boolean;
-  uploaded_by: string;
-  created_at: string;
+  tool_url?: string;
+  pricing_type?: string;
+  tags: string[];
+  thumbnail_url?: string;
   downloads: number;
+  views: number;
   rating: number;
   rating_count: number;
-  views: number;
-  tags: string[];
+  is_featured: boolean;
+  is_approved: boolean;
+  is_active: boolean;
+  uploaded_by?: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export default function DSANotes() {
   const router = useRouter();
-  const [topics, setTopics] = useState<DSATopic[]>([]);
+  const [topics, setTopics] = useState<Topic[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -56,28 +69,30 @@ export default function DSANotes() {
     try {
       setLoading(true);
 
-      // Load topics for DSA category
+      // Load topics for DSA category using unified schema
       const { data: topicsData, error: topicsError } = await supabase
-        .from("common_topics")
-        .select("id, title, description, difficulty, technologies, is_active, created_at, updated_at")
+        .from("topics")
+        .select("*")
         .eq("category_id", "dsa")
         .eq("is_active", true)
-        .order("title");
+        .order("sort_order");
 
       if (topicsError) throw topicsError;
 
-      // Load notes for each topic
+      // Load notes for each topic using unified resources table
       const topicsWithNotes = await Promise.all(
         (topicsData || []).map(async (topic) => {
           const { data: notesData, error: notesError } = await supabase
-            .from("common_notes")
+            .from("resources")
             .select("*")
             .eq("topic_id", topic.id)
+            .eq("resource_type", "note")
             .eq("is_approved", true)
+            .eq("is_active", true)
             .order("created_at", { ascending: false });
 
           if (notesError) {
-            console.error("Error loading notes for topic:", topic.title, notesError);
+            console.log("No notes found for topic:", topic.title);
           }
 
           return {
@@ -89,8 +104,8 @@ export default function DSANotes() {
 
       setTopics(topicsWithNotes);
     } catch (error) {
-      console.error("Error loading DSA topics and notes:", error);
-      Alert.alert("Error", "Failed to load topics. Please try again.");
+      console.log("Could not load DSA content - may be empty or permission restricted");
+      // Don't show alert for empty data - just show empty state
     } finally {
       setLoading(false);
     }
@@ -102,56 +117,49 @@ export default function DSANotes() {
     setRefreshing(false);
   };
 
-  const getDifficultyColor = (difficulty: string) => {
-    switch (difficulty) {
-      case "Easy":
-        return "#52c41a";
-      case "Medium":
-        return "#fa8c16";
-      case "Hard":
-        return "#ff4d4f";
-      default:
-        return "#666";
+  const handleDownload = async (note: Resource) => {
+    try {
+      if (note.file_url) {
+        // Update download count
+        await supabase
+          .from("resources")
+          .update({ downloads: (note.downloads || 0) + 1 })
+          .eq("id", note.id);
+
+        // Open the file URL
+        const { Linking } = require("react-native");
+        await Linking.openURL(note.file_url);
+        
+        // Refresh data to show updated download count
+        loadTopicsAndNotes();
+      }
+    } catch (error) {
+      console.error("Error downloading file:", error);
+      Alert.alert("Error", "Failed to download file. Please try again.");
     }
   };
 
-  const handleTopicPress = (topic: DSATopic) => {
-    router.push({
-      pathname: "/common/notes/[category]",
-      params: {
-        category: "dsa",
-        topicId: topic.id,
-        topicTitle: topic.title,
-        topicDescription: topic.description,
-      },
-    });
+  const getDifficultyColor = (difficulty: string) => {
+    switch (difficulty) {
+      case "Beginner":
+        return "#10B981"; // Green
+      case "Easy":
+        return "#3B82F6"; // Blue
+      case "Medium":
+        return "#F59E0B"; // Yellow
+      case "Hard":
+        return "#EF4444"; // Red
+      default:
+        return "#6B7280"; // Gray
+    }
   };
 
-  const renderDifficultyBadge = (difficulty: string) => {
-    const colors = {
-      Easy: { bg: "#f6ffed", text: "#52c41a", border: "#b7eb8f" },
-      Medium: { bg: "#fff7e6", text: "#fa8c16", border: "#ffd591" },
-      Hard: { bg: "#fff2f0", text: "#ff4d4f", border: "#ffb3b0" },
-      Beginner: { bg: "#f0f9ff", text: "#0ea5e9", border: "#7dd3fc" },
-      Intermediate: { bg: "#fefce8", text: "#eab308", border: "#fde047" },
-      Advanced: { bg: "#fdf2f8", text: "#ec4899", border: "#f9a8d4" },
-    };
-    const color = colors[difficulty as keyof typeof colors] || colors.Medium;
+  const formatFileSize = (size?: string) => {
+    return size || "Unknown size";
+  };
 
-    return {
-      backgroundColor: color.bg,
-      color: color.text,
-      borderColor: color.border,
-      borderWidth: 1,
-      paddingHorizontal: 8,
-      paddingVertical: 4,
-      borderRadius: 12,
-      fontSize: 11,
-      fontWeight: "600" as any,
-      maxWidth: 60,
-      textAlign: "center",
-      marginBottom: 10
-    };
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString();
   };
 
   if (loading) {
@@ -159,8 +167,8 @@ export default function DSANotes() {
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#1890ff" />
-          <Text style={styles.loadingText}>Loading DSA topics...</Text>
+          <ActivityIndicator size="large" color="#3B82F6" />
+          <Text style={styles.loadingText}>Loading DSA resources...</Text>
         </View>
       </SafeAreaView>
     );
@@ -169,174 +177,133 @@ export default function DSANotes() {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
-
+      
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-          <ArrowLeft color="#333" size={24} />
+        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <ArrowLeft size={24} color="#374151" />
         </TouchableOpacity>
         <View style={styles.headerContent}>
-          <Text style={styles.headerTitle}>DSA Notes</Text>
-          <Text style={styles.headerSubtitle}>Data Structures & Algorithms</Text>
+          <View style={styles.headerIcon}>
+            <Code size={28} color="#3B82F6" />
+          </View>
+          <View>
+            <Text style={styles.headerTitle}>Data Structures & Algorithms</Text>
+            <Text style={styles.headerSubtitle}>{topics.length} topics available</Text>
+          </View>
         </View>
-        <View style={styles.placeholder} />
       </View>
 
       <ScrollView
-        style={styles.scrollView}
+        style={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        {/* Hero Section */}
-        <View style={styles.heroSection}>
-          <View style={styles.heroIcon}>
-            <Code color="#1890ff" size={32} />
-          </View>
-          <Text style={styles.heroTitle}>Master Data Structures & Algorithms</Text>
-          <Text style={styles.heroDescription}>
-            Comprehensive notes, practice problems, and solutions to help you excel in coding interviews and competitive
-            programming.
-          </Text>
-
-          <View style={styles.statsRow}>
-            <View style={styles.statItem}>
-              <Code color="#1890ff" size={18} />
-              <Text style={styles.statNumber}>{topics.length}</Text>
-              <Text style={styles.statLabel}>Topics</Text>
+        {topics.map((topic) => (
+          <View key={topic.id} style={styles.topicCard}>
+            <View style={styles.topicHeader}>
+              <View style={styles.topicInfo}>
+                <Text style={styles.topicTitle}>{topic.title}</Text>
+                <Text style={styles.topicDescription}>{topic.description}</Text>
+              </View>
+              <View style={[styles.difficultyBadge, { backgroundColor: getDifficultyColor(topic.difficulty) }]}>
+                <Text style={styles.difficultyText}>{topic.difficulty}</Text>
+              </View>
             </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statItem}>
-              <FileText color="#52c41a" size={18} />
-              <Text style={styles.statNumber}>{topics.reduce((sum, topic) => sum + topic.notes.length, 0)}+</Text>
-              <Text style={styles.statLabel}>Resources</Text>
+
+            <View style={styles.topicStats}>
+              <View style={styles.statItem}>
+                <FileText size={16} color="#6B7280" />
+                <Text style={styles.statText}>{topic.notes.length} notes</Text>
+              </View>
+              <View style={styles.statItem}>
+                <Download size={16} color="#6B7280" />
+                <Text style={styles.statText}>
+                  {topic.notes.reduce((sum, note) => sum + (note.downloads || 0), 0)} downloads
+                </Text>
+              </View>
             </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statItem}>
-              <Download color="#722ed1" size={18} />
-              <Text style={styles.statNumber}>
-                {topics.reduce(
-                  (sum, topic) => sum + topic.notes.reduce((noteSum, note) => noteSum + (note.downloads || 0), 0),
-                  0,
-                )}
-                +
-              </Text>
-              <Text style={styles.statLabel}>Downloads</Text>
-            </View>
-          </View>
-        </View>
 
-        {/* Topics Grid */}
-        <View style={styles.topicsSection}>
-          <Text style={styles.sectionTitle}>Choose Your Topic</Text>
-          <Text style={styles.sectionSubtitle}>Start with basics and progress to advanced concepts</Text>
-
-          {topics.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Code color="#ccc" size={48} />
-              <Text style={styles.emptyTitle}>No Topics Available</Text>
-              <Text style={styles.emptyDescription}>
-                Topics will appear here once they are added by administrators.
-              </Text>
-            </View>
-          ) : (
-            <View style={styles.topicsGrid}>
-              {topics.map((topic) => (
-                <TouchableOpacity key={topic.id} style={styles.topicCard} onPress={() => handleTopicPress(topic)}>
-          
-
-                  <View style={styles.topicContent}>
-                    <Text style={styles.topicTitle}>{topic.title}</Text>
-                    <Text style={styles.topicDescription} numberOfLines={2}>{topic.description}</Text>
-                    
-                    <Text style={renderDifficultyBadge(topic.difficulty)}>
-                      {topic.difficulty}
-                    </Text>
-
-                    <View style={styles.topicStats}>
-                      <View style={styles.topicStat}>
-                        <FileText color="#666" size={14} />
-                        <Text style={styles.topicStatText}>{topic.notes.length} Resources</Text>
-                      </View>
-                      <View style={styles.topicStat}>
-                        <Star color="#faad14" size={14} />
-                        <Text style={styles.topicStatText}>
-                          {topic.notes.length > 0 ?
-                            (topic.notes.reduce((sum, note) => sum + note.rating, 0) / topic.notes.length).toFixed(1) :
-                            "New"
-                          }
+            {topic.notes.length > 0 ? (
+              <View style={styles.notesContainer}>
+                {topic.notes.map((note) => (
+                  <TouchableOpacity
+                    key={note.id}
+                    style={styles.noteCard}
+                    onPress={() => handleDownload(note)}
+                  >
+                    <View style={styles.noteHeader}>
+                      <View style={styles.noteInfo}>
+                        <Text style={styles.noteTitle}>{note.title}</Text>
+                        <Text style={styles.noteDescription} numberOfLines={2}>
+                          {note.description}
                         </Text>
                       </View>
-                      <View style={styles.topicStat}>
-                        <Download color="#722ed1" size={14} />
-                        <Text style={styles.topicStatText}>
-                          {topic.notes.reduce((sum, note) => sum + (note.downloads || 0), 0)}
-                        </Text>
+                      {note.is_featured && (
+                        <View style={styles.featuredBadge}>
+                          <Star size={12} color="#F59E0B" />
+                        </View>
+                      )}
+                    </View>
+
+                    <View style={styles.noteDetails}>
+                      <View style={styles.noteMetadata}>
+                        <Text style={styles.fileType}>{note.file_type?.toUpperCase()}</Text>
+                        <Text style={styles.fileSize}>{formatFileSize(note.file_size)}</Text>
+                      </View>
+                      <View style={styles.noteStats}>
+                        <View style={styles.statItem}>
+                          <Download size={14} color="#6B7280" />
+                          <Text style={styles.statValue}>{note.downloads}</Text>
+                        </View>
+                        <View style={styles.statItem}>
+                          <Eye size={14} color="#6B7280" />
+                          <Text style={styles.statValue}>{note.views}</Text>
+                        </View>
+                        {note.rating > 0 && (
+                          <View style={styles.statItem}>
+                            <Star size={14} color="#F59E0B" />
+                            <Text style={styles.statValue}>{note.rating.toFixed(1)}</Text>
+                          </View>
+                        )}
                       </View>
                     </View>
 
-                    {topic.notes.some(note => note.is_featured) && (
-                      <View style={styles.featuredBadge}>
-                        <Star color="#faad14" size={12} />
-                        <Text style={styles.featuredText}>Featured Content</Text>
+                    {note.tags && note.tags.length > 0 && (
+                      <View style={styles.tagsContainer}>
+                        {note.tags.slice(0, 3).map((tag, index) => (
+                          <View key={index} style={styles.tag}>
+                            <Text style={styles.tagText}>{tag}</Text>
+                          </View>
+                        ))}
+                        {note.tags.length > 3 && (
+                          <Text style={styles.moreTagsText}>+{note.tags.length - 3} more</Text>
+                        )}
                       </View>
                     )}
-                  </View>
 
-                  <View style={styles.topicFooter}>
-                    <Text style={styles.exploreText}>Explore {topic.notes.length} Resources</Text>
-                    <ExternalLink color="#1890ff" size={16} />
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-        </View>
-
-        {/* Tips Section */}
-        <View style={styles.tipsSection}>
-          <Text style={styles.sectionTitle}>Study Tips</Text>
-
-          <View style={styles.tipCard}>
-            <View style={styles.tipHeader}>
-              <Target color="#52c41a" size={20} />
-              <Text style={styles.tipTitle}>Start with Fundamentals</Text>
-            </View>
-            <Text style={styles.tipDescription}>
-              Master basic data structures (Arrays, Linked Lists, Stacks, Queues) before moving to advanced topics.
-            </Text>
+                    <View style={styles.downloadButton}>
+                      <ExternalLink size={16} color="#3B82F6" />
+                      <Text style={styles.downloadButtonText}>Download</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : (
+              <View style={styles.emptyState}>
+                <FileText size={48} color="#D1D5DB" />
+                <Text style={styles.emptyStateText}>No notes available for this topic</Text>
+              </View>
+            )}
           </View>
+        ))}
 
-          <View style={styles.tipCard}>
-            <View style={styles.tipHeader}>
-              <TrendingUp color="#1890ff" size={20} />
-              <Text style={styles.tipTitle}>Practice Pattern Recognition</Text>
-            </View>
-            <Text style={styles.tipDescription}>
-              Learn common problem patterns like Two Pointers, Sliding Window, and Dynamic Programming.
-            </Text>
+        {topics.length === 0 && (
+          <View style={styles.emptyState}>
+            <Code size={64} color="#D1D5DB" />
+            <Text style={styles.emptyStateTitle}>No DSA Topics Found</Text>
+            <Text style={styles.emptyStateText}>Check back later for new content</Text>
           </View>
-
-          <View style={styles.tipCard}>
-            <View style={styles.tipHeader}>
-              <Clock color="#fa8c16" size={20} />
-              <Text style={styles.tipTitle}>Code Interview Ready</Text>
-            </View>
-            <Text style={styles.tipDescription}>
-              Focus on clean, readable code with optimal time and space complexity for technical interviews.
-            </Text>
-          </View>
-
-          <View style={styles.tipCard}>
-            <View style={styles.tipHeader}>
-              <Code color="#722ed1" size={20} />
-              <Text style={styles.tipTitle}>Review & Analyze</Text>
-            </View>
-            <Text style={styles.tipDescription}>
-              After solving problems, review different approaches and understand trade-offs between solutions.
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.bottomSpacing} />
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -345,7 +312,7 @@ export default function DSANotes() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f8f9fa",
+    backgroundColor: "#F9FAFB",
   },
   loadingContainer: {
     flex: 1,
@@ -353,274 +320,229 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   loadingText: {
-    marginTop: 12,
+    marginTop: 16,
     fontSize: 16,
-    color: "#666",
+    color: "#6B7280",
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: "#ffffff",
+    padding: 16,
+    backgroundColor: "#FFFFFF",
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
+    borderBottomColor: "#E5E7EB",
   },
   backButton: {
+    marginRight: 16,
     padding: 8,
   },
   headerContent: {
-    flex: 1,
+    flexDirection: "row",
     alignItems: "center",
+    flex: 1,
+  },
+  headerIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: "#EBF4FF",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
   },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#333",
+    fontSize: 20,
+    fontWeight: "600",
+    color: "#111827",
   },
   headerSubtitle: {
     fontSize: 14,
-    color: "#666",
+    color: "#6B7280",
     marginTop: 2,
   },
-  placeholder: {
-    width: 40,
-  },
-  scrollView: {
+  content: {
     flex: 1,
-  },
-  heroSection: {
-    backgroundColor: "#ffffff",
-    margin: 16,
-    borderRadius: 20,
-    padding: 24,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#f0f0f0",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  heroIcon: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: "#e6f4ff",
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 16,
-  },
-  heroTitle: {
-    fontSize: 22,
-    fontWeight: "700",
-    color: "#333",
-    textAlign: "center",
-    marginBottom: 8,
-  },
-  heroDescription: {
-    fontSize: 16,
-    color: "#666",
-    textAlign: "center",
-    lineHeight: 24,
-    marginBottom: 24,
-  },
-  statsRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#f8f9fa",
-    borderRadius: 12,
     padding: 16,
-    width: "100%",
-  },
-  statItem: {
-    flex: 1,
-    alignItems: "center",
-  },
-  statNumber: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#1890ff",
-    marginBottom: 4,
-  },
-  statLabel: {
-    fontSize: 12,
-    color: "#666",
-    fontWeight: "500",
-  },
-  statDivider: {
-    width: 1,
-    height: 30,
-    backgroundColor: "#e5e7eb",
-    marginHorizontal: 16,
-  },
-  topicsSection: {
-    margin: 16,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#333",
-    marginBottom: 4,
-  },
-  sectionSubtitle: {
-    fontSize: 14,
-    color: "#666",
-    marginBottom: 20,
-  },
-  emptyState: {
-    alignItems: "center",
-    padding: 40,
-    backgroundColor: "#ffffff",
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#f0f0f0",
-  },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#333",
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  emptyDescription: {
-    fontSize: 14,
-    color: "#666",
-    textAlign: "center",
-  },
-  topicsGrid: {
-    gap: 16,
   },
   topicCard: {
-    backgroundColor: "#ffffff",
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#f0f0f0",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-    overflow: "hidden",
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   topicHeader: {
     flexDirection: "row",
-    alignItems: "center",
     justifyContent: "space-between",
-    padding: 16,
-    backgroundColor: "#1890ff15",
+    alignItems: "flex-start",
+    marginBottom: 12,
   },
-  topicIcon: {
-    fontSize: 24,
-  },
-  topicIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "rgba(255, 255, 255, 0.9)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  difficultyText: {
-    
-    fontSize: 11,
-    fontWeight: "600" as any,
-  },
-  topicContent: {
-    padding: 16,
+  topicInfo: {
+    flex: 1,
+    marginRight: 12,
   },
   topicTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
+    color: "#111827",
     marginBottom: 4,
   },
   topicDescription: {
     fontSize: 14,
-    color: "#666",
+    color: "#6B7280",
     lineHeight: 20,
-    marginBottom: 12,
+  },
+  difficultyBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  difficultyText: {
+    fontSize: 12,
+    fontWeight: "500",
+    color: "#FFFFFF",
   },
   topicStats: {
     flexDirection: "row",
-    gap: 16,
+    marginBottom: 16,
   },
-  topicStat: {
+  statItem: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
+    marginRight: 16,
   },
-  topicStatText: {
+  statText: {
+    fontSize: 14,
+    color: "#6B7280",
+    marginLeft: 4,
+  },
+  statValue: {
     fontSize: 12,
-    color: "#666",
-    fontWeight: "500",
+    color: "#6B7280",
+    marginLeft: 4,
   },
-  topicFooter: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: 16,
-    backgroundColor: "#f8f9fa",
-    borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
+  notesContainer: {
+    gap: 12,
   },
-  exploreText: {
-    fontSize: 13,
-    fontWeight: "500",
-    color: "#666",
-  },
-  featuredBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    backgroundColor: "#fff7e6",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+  noteCard: {
+    backgroundColor: "#F9FAFB",
     borderRadius: 8,
-    marginTop: 8,
-    alignSelf: "flex-start",
-  },
-  featuredText: {
-    fontSize: 11,
-    fontWeight: "600",
-    color: "#fa8c16",
-  },
-  tipsSection: {
-    margin: 16,
-    marginTop: 8,
-  },
-  tipCard: {
-    backgroundColor: "#ffffff",
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
+    padding: 12,
     borderWidth: 1,
-    borderColor: "#f0f0f0",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
-    shadowRadius: 4,
-    elevation: 1,
+    borderColor: "#E5E7EB",
   },
-  tipHeader: {
+  noteHeader: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
+    justifyContent: "space-between",
+    alignItems: "flex-start",
     marginBottom: 8,
   },
-  tipTitle: {
+  noteInfo: {
+    flex: 1,
+    marginRight: 8,
+  },
+  noteTitle: {
     fontSize: 16,
-    fontWeight: "600",
-    color: "#333",
+    fontWeight: "500",
+    color: "#111827",
+    marginBottom: 4,
   },
-  tipDescription: {
+  noteDescription: {
     fontSize: 14,
-    color: "#666",
-    lineHeight: 20,
+    color: "#6B7280",
+    lineHeight: 18,
   },
-  bottomSpacing: {
-    height: 32,
+  featuredBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "#FEF3C7",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  noteDetails: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  noteMetadata: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  fileType: {
+    fontSize: 12,
+    fontWeight: "500",
+    color: "#3B82F6",
+    backgroundColor: "#EBF4FF",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  fileSize: {
+    fontSize: 12,
+    color: "#6B7280",
+  },
+  noteStats: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  tagsContainer: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginBottom: 8,
+  },
+  tag: {
+    backgroundColor: "#E5E7EB",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginRight: 4,
+    marginBottom: 4,
+  },
+  tagText: {
+    fontSize: 10,
+    color: "#374151",
+  },
+  moreTagsText: {
+    fontSize: 10,
+    color: "#6B7280",
+    alignSelf: "center",
+  },
+  downloadButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#EBF4FF",
+    paddingVertical: 8,
+    borderRadius: 6,
+  },
+  downloadButtonText: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#3B82F6",
+    marginLeft: 4,
+  },
+  emptyState: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 32,
+  },
+  emptyStateTitle: {
+    fontSize: 18,
+    fontWeight: "500",
+    color: "#374151",
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  emptyStateText: {
+    fontSize: 14,
+    color: "#6B7280",
+    textAlign: "center",
   },
 });
