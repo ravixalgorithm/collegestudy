@@ -1,15 +1,11 @@
 {
   "expo": {
-    "name": "HBTU Study",
+    "name": "College Study",
     "slug": "hbtu-college-study",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+
     "userInterfaceStyle": "automatic",
-    "statusBar": {
-      "style": "dark",
-      "backgroundColor": "#ffffff"
-    },
     "developmentClient": {
       "silentLaunch": true
     },
@@ -21,23 +17,23 @@
     "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.hbtu.collegestudy",
-      "statusBar": {
-        "style": "dark"
+      "bundleIdentifier": "com.collegestudy",
+      "infoPlist": {
+        "UIBackgroundModes": ["background-fetch", "background-processing"],
+        "NSCameraUsageDescription": "This app uses the camera to upload profile pictures and documents.",
+        "NSPhotoLibraryUsageDescription": "This app accesses your photo library to upload images."
       }
     },
     "android": {
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
-      },
-      "package": "com.hbtu.collegestudy",
-      "permissions": ["CAMERA", "READ_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE"],
-      "statusBar": {
-        "backgroundColor": "#ffffff",
-        "barStyle": "dark-content"
-      },
-      "buildType": "apk",
+      "package": "com.collegestudy",
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "INTERNET",
+        "ACCESS_NETWORK_STATE",
+        "WAKE_LOCK"
+      ],
       "versionCode": 1
     },
     "web": {
@@ -50,8 +46,11 @@
         "origin": false
       },
       "eas": {
-        "projectId": "your-project-id"
+        "projectId": "130a9f9e-4605-4341-a26c-100c228a47a2"
       }
+    },
+    "experiments": {
+      "typedRoutes": false
     },
     "updates": {
       "fallbackToCacheTimeout": 0

@@ -94,19 +94,162 @@ export default function BranchesPage() {
   async function loadData() {
     setLoading(true);
     try {
-      const [branchesRes, hierarchyRes, subjectsRes] = await Promise.all([
-        supabase.from("branches").select("*").order("display_order", { ascending: true }).order("name"),
-        supabase.rpc("get_branch_hierarchy"),
-        supabase.from("subjects_with_branches").select("*").order("name"),
-      ]);
+      // Load branches first
+      const branchesRes = await supabase
+        .from("branches")
+        .select("*")
+        .order("display_order", { ascending: true })
+        .order("name");
 
       if (branchesRes.data) setBranches(branchesRes.data);
-      if (hierarchyRes.data) setBranchHierarchy(hierarchyRes.data);
-      if (subjectsRes.data) setSubjects(subjectsRes.data);
+
+      // Try to load hierarchy with RPC, fallback if not available
+      let hierarchyData = [];
+      try {
+        const hierarchyRes = await supabase.rpc("get_branch_hierarchy");
+        if (hierarchyRes.data) {
+          hierarchyData = hierarchyRes.data;
+        }
+      } catch (rpcError) {
+        console.warn("RPC function not available, using fallback hierarchy query");
+        hierarchyData = await buildBranchHierarchyFallback();
+      }
+      setBranchHierarchy(hierarchyData);
+
+      // Load subjects with branch relationships
+      const subjectsRes = await supabase
+        .from("subjects")
+        .select(
+          `
+          *,
+          subject_branches (
+            branch_id,
+            branches (
+              id,
+              name,
+              code
+            )
+          )
+        `,
+        )
+        .order("name");
+
+      // Process subjects data to ensure branch_codes is always an array
+      if (subjectsRes.data) {
+        const processedSubjects = subjectsRes.data.map((subject) => {
+          try {
+            const branchData = subject.subject_branches || [];
+
+            // Handle various data formats that might come from the database
+            let branchCodes = [];
+            let branchNames = [];
+            let branchIds = [];
+
+            if (Array.isArray(branchData)) {
+              branchCodes = branchData.map((sb) => sb?.branches?.code || sb?.code).filter(Boolean);
+              branchNames = branchData.map((sb) => sb?.branches?.name || sb?.name).filter(Boolean);
+              branchIds = branchData.map((sb) => sb?.branch_id || sb?.id).filter(Boolean);
+            } else if (branchData && typeof branchData === "object") {
+              // Handle single object case
+              if (branchData.branches?.code) branchCodes = [branchData.branches.code];
+              if (branchData.branches?.name) branchNames = [branchData.branches.name];
+              if (branchData.branch_id) branchIds = [branchData.branch_id];
+            }
+
+            return {
+              ...subject,
+              branch_codes: branchCodes,
+              branch_names: branchNames,
+              branch_ids: branchIds,
+            };
+          } catch (error) {
+            console.warn("Error processing subject:", subject.id, error);
+            return {
+              ...subject,
+              branch_codes: [],
+              branch_names: [],
+              branch_ids: [],
+            };
+          }
+        });
+        setSubjects(processedSubjects);
+      }
     } catch (error) {
       console.error("Error loading data:", error);
+      // Set empty arrays to prevent crashes
+      setBranches([]);
+      setBranchHierarchy([]);
+      setSubjects([]);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function buildBranchHierarchyFallback(): Promise<BranchHierarchy[]> {
+    try {
+      // Get all branches
+      const { data: branches } = await supabase
+        .from("branches")
+        .select("*")
+        .order("display_order", { ascending: true });
+
+      // Get all branch years
+      const { data: branchYears } = await supabase.from("branch_years").select("*").order("year_number");
+
+      // Get all branch semesters
+      const { data: branchSemesters } = await supabase.from("branch_semesters").select("*").order("semester_number");
+
+      const hierarchy: BranchHierarchy[] = [];
+
+      if (branches && branchYears && branchSemesters) {
+        branches.forEach((branch) => {
+          const years = branchYears.filter((year) => year.branch_id === branch.id);
+
+          years.forEach((year) => {
+            const semesters = branchSemesters.filter((sem) => sem.branch_year_id === year.id);
+
+            if (semesters.length > 0) {
+              semesters.forEach((semester) => {
+                hierarchy.push({
+                  branch_id: branch.id,
+                  branch_code: branch.code,
+                  branch_name: branch.name,
+                  branch_is_active: branch.is_active,
+                  year_id: year.id,
+                  year_number: year.year_number,
+                  year_is_active: year.is_active,
+                  semester_id: semester.id,
+                  semester_number: semester.semester_number,
+                  semester_label: semester.semester_label,
+                  semester_is_active: semester.is_active,
+                  semester_is_current: semester.is_current,
+                });
+              });
+            } else {
+              // Year without semesters
+              hierarchy.push({
+                branch_id: branch.id,
+                branch_code: branch.code,
+                branch_name: branch.name,
+                branch_is_active: branch.is_active,
+                year_id: year.id,
+                year_number: year.year_number,
+                year_is_active: year.is_active,
+                semester_id: "",
+                semester_number: 0,
+                semester_label: "",
+                semester_is_active: false,
+                semester_is_current: false,
+              });
+            }
+          });
+        });
+      }
+
+      return hierarchy;
+    } catch (error) {
+      console.error("Error building hierarchy fallback:", error);
+      return [];
     }
   }
 
@@ -188,6 +331,8 @@ export default function BranchesPage() {
         alert(`Error: Subject code "${formData.code}" already exists. Please use a different code.`);
       } else if (error.message.includes("foreign key")) {
         alert("Error: Invalid branch selection. Please refresh the page and try again.");
+      } else if (error.message.includes("row-level security")) {
+        alert("Error: Permission denied. Please check your access permissions and try again.");
       } else {
         alert(`Error saving subject: ${error.message}`);
       }
@@ -197,112 +342,35 @@ export default function BranchesPage() {
   }
 
   async function deleteSubject(subjectId: string) {
+    if (!confirm("Are you sure you want to delete this subject? This action cannot be undone.")) {
+      return;
+    }
+
     try {
-      // Get the user's authentication token for pre-check
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const { error } = await supabase.from("subjects").delete().eq("id", subjectId);
 
-      if (!session?.access_token) {
-        alert("You must be logged in to delete subjects.");
-        return;
-      }
+      if (error) throw error;
 
-      // Check for related notes first
-      const { data: relatedNotes, error: notesError } = await supabase
-        .from("notes")
-        .select("id, title")
-        .eq("subject_id", subjectId);
-
-      if (notesError) {
-        console.error("Error checking related notes:", notesError);
-        alert("Error checking related notes. Please try again.");
-        return;
-      }
-
-      // Show appropriate confirmation message
-      let confirmMessage = "Are you sure you want to delete this subject?";
-      if (relatedNotes && relatedNotes.length > 0) {
-        confirmMessage += ` This will also delete ${relatedNotes.length} related notes.`;
-      }
-
-      if (!confirm(confirmMessage)) return;
-      console.log("Attempting to delete subject with ID:", subjectId);
-
-      // Call the API route to delete the subject
-      const response = await fetch(`/api/subjects/${subjectId}`, {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || "Failed to delete subject");
-      }
-
-      console.log("Subject deleted successfully:", result);
-
-      // Show success message with details
-      let successMessage = "Subject deleted successfully!";
-      const deletedItems = [];
-
-      if (result.deleted_notes_count > 0) {
-        deletedItems.push(`${result.deleted_notes_count} notes`);
-      }
-      if (result.deleted_timetable_count > 0) {
-        deletedItems.push(`${result.deleted_timetable_count} timetable entries`);
-      }
-      if (result.deleted_exam_schedule_count > 0) {
-        deletedItems.push(`${result.deleted_exam_schedule_count} exam schedules`);
-      }
-      if (result.deleted_subject_branches_count > 0) {
-        deletedItems.push(`${result.deleted_subject_branches_count} branch associations`);
-      }
-
-      const unlinkedItems = [];
-      if (result.unlinked_forum_posts_count > 0) {
-        unlinkedItems.push(`${result.unlinked_forum_posts_count} forum posts`);
-      }
-      if (result.unlinked_cgpa_records_count > 0) {
-        unlinkedItems.push(`${result.unlinked_cgpa_records_count} CGPA records`);
-      }
-
-      if (deletedItems.length > 0) {
-        successMessage += ` Deleted: ${deletedItems.join(", ")}.`;
-      }
-      if (unlinkedItems.length > 0) {
-        successMessage += ` Unlinked: ${unlinkedItems.join(", ")}.`;
-      }
-
-      alert(successMessage);
+      alert("Subject deleted successfully!");
       loadData();
     } catch (error: any) {
       console.error("Error deleting subject:", error);
-
-      let errorMessage = "Error deleting subject: ";
-
-      if (error?.message) {
-        errorMessage += error.message;
-      } else {
-        errorMessage += "Unknown error occurred.";
-      }
-
-      alert(errorMessage);
+      alert(`Error deleting subject: ${error.message}`);
     }
   }
 
   function openEditModal(subject: Subject) {
     setEditingSubject(subject);
     setFormData({
-      name: subject.name,
-      code: subject.code,
-      branch_ids: subject.branch_ids || [],
-      semester: subject.semester.toString(),
-      credits: subject.credits.toString(),
+      name: subject.name || "",
+      code: subject.code || "",
+      branch_ids: Array.isArray(subject.branch_ids)
+        ? subject.branch_ids
+        : subject.branch_ids
+          ? [subject.branch_ids]
+          : [],
+      semester: (subject.semester || 1).toString(),
+      credits: (subject.credits || 3).toString(),
       syllabus_url: subject.syllabus_url || "",
       description: subject.description || "",
     });
@@ -324,13 +392,31 @@ export default function BranchesPage() {
 
   async function toggleStatus(entityType: "branch" | "year" | "semester", entityId: string, currentStatus: boolean) {
     try {
+      // Try RPC function first
       const { error } = await supabase.rpc("toggle_branch_status", {
         p_entity_type: entityType,
         p_entity_id: entityId,
         p_is_active: !currentStatus,
       });
 
-      if (error) throw error;
+      if (error) {
+        // Fallback to direct table updates if RPC doesn't exist
+        if (error.message?.includes("function") && error.message?.includes("does not exist")) {
+          console.warn("toggle_branch_status function not found, using direct update");
+
+          const tableName =
+            entityType === "branch" ? "branches" : entityType === "year" ? "branch_years" : "branch_semesters";
+
+          const { error: updateError } = await supabase
+            .from(tableName)
+            .update({ is_active: !currentStatus })
+            .eq("id", entityId);
+
+          if (updateError) throw updateError;
+        } else {
+          throw error;
+        }
+      }
 
       // Reload data to reflect changes
       await loadData();
@@ -402,16 +488,6 @@ export default function BranchesPage() {
 
     return acc;
   }, {} as any);
-
-  const subjectsBySemester = subjects.reduce(
-    (acc, subject) => {
-      const key = subject.semester;
-      if (!acc[key]) acc[key] = [];
-      acc[key].push(subject);
-      return acc;
-    },
-    {} as Record<number, Subject[]>,
-  );
 
   return (
     <DashboardLayout>
@@ -523,200 +599,233 @@ export default function BranchesPage() {
           <div className="p-6">
             {activeTab === "branches" ? (
               <div className="space-y-4">
-                {Object.values(groupedHierarchy).map((branchGroup: any) => {
-                  const branch = branchGroup.branch;
-                  const isExpanded = expandedBranches.has(branch.id);
+                {loading ? (
+                  <div className="text-center py-8">
+                    <div className="inline-flex items-center px-4 py-2 text-sm font-medium text-gray-700">
+                      <Loader2 className="animate-spin -ml-1 mr-3 h-5 w-5 text-gray-700" />
+                      Loading branches...
+                    </div>
+                  </div>
+                ) : branches.length === 0 ? (
+                  <div className="text-center py-12 bg-gray-50 rounded-lg">
+                    <GraduationCap className="mx-auto h-12 w-12 text-gray-400 mb-4" />
+                    <h3 className="text-lg font-medium text-gray-900 mb-2">No branches found</h3>
+                    <p className="text-gray-600">No academic branches have been set up yet.</p>
+                  </div>
+                ) : (
+                  // Display branches - either from hierarchy or fallback to basic branch list
+                  (Object.keys(groupedHierarchy).length > 0
+                    ? Object.values(groupedHierarchy)
+                    : branches.map((branch) => ({
+                        branch: branch,
+                        years: {},
+                      }))
+                  ).map((branchGroup: any) => {
+                    const branch = branchGroup.branch;
+                    const isExpanded = expandedBranches.has(branch.id);
+                    const hasYears = Object.keys(branchGroup.years || {}).length > 0;
 
-                  return (
-                    <div key={branch.id} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-                      {/* Branch Header */}
-                      <div className="p-4 bg-gray-50 border-b border-gray-200">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center space-x-3">
-                            <button
-                              onClick={() => toggleBranchExpansion(branch.id)}
-                              className="p-1 hover:bg-gray-200 rounded"
-                            >
-                              {isExpanded ? (
-                                <ChevronDown className="w-4 h-4 text-gray-600" />
-                              ) : (
-                                <ChevronRight className="w-4 h-4 text-gray-600" />
-                              )}
-                            </button>
-                            <div>
-                              <div className="flex items-center space-x-2">
-                                <h3 className="font-bold text-lg text-gray-900">{branch.code}</h3>
-                                <span
-                                  className={`px-2 py-1 rounded-full text-xs font-medium ${
-                                    branch.is_active ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
-                                  }`}
-                                >
-                                  {branch.is_active ? "Active" : "Inactive"}
-                                </span>
+                    return (
+                      <div key={branch.id} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                        {/* Branch Header */}
+                        <div className="p-4 bg-gray-50 border-b border-gray-200">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-3">
+                              <button
+                                onClick={() => toggleBranchExpansion(branch.id)}
+                                className="p-1 hover:bg-gray-200 rounded"
+                                disabled={!hasYears}
+                              >
+                                {hasYears ? (
+                                  isExpanded ? (
+                                    <ChevronDown className="w-4 h-4 text-gray-600" />
+                                  ) : (
+                                    <ChevronRight className="w-4 h-4 text-gray-600" />
+                                  )
+                                ) : (
+                                  <div className="w-4 h-4" />
+                                )}
+                              </button>
+                              <div>
+                                <div className="flex items-center space-x-2">
+                                  <h3 className="font-bold text-lg text-gray-900">{branch.code}</h3>
+                                  <span
+                                    className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                      branch.is_active ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+                                    }`}
+                                  >
+                                    {branch.is_active ? "Active" : "Inactive"}
+                                  </span>
+                                  {!hasYears && (
+                                    <span className="px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700">
+                                      No Hierarchy
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-sm text-gray-600">{branch.name}</p>
                               </div>
-                              <p className="text-sm text-gray-600">{branch.name}</p>
+                            </div>
+
+                            <div className="flex items-center space-x-2">
+                              <button
+                                onClick={() => toggleStatus("branch", branch.id, branch.is_active)}
+                                className={`px-3 py-1 rounded text-sm font-medium ${
+                                  branch.is_active
+                                    ? "bg-red-100 text-red-700 hover:bg-red-200"
+                                    : "bg-green-100 text-green-700 hover:bg-green-200"
+                                }`}
+                              >
+                                {branch.is_active ? "Deactivate" : "Activate"}
+                              </button>
                             </div>
                           </div>
-
-                          <div className="flex items-center space-x-2">
-                            <button
-                              onClick={() => toggleStatus("branch", branch.id, branch.is_active)}
-                              className={`px-3 py-1 rounded text-sm font-medium ${
-                                branch.is_active
-                                  ? "bg-red-100 text-red-700 hover:bg-red-200"
-                                  : "bg-green-100 text-green-700 hover:bg-green-200"
-                              }`}
-                            >
-                              {branch.is_active ? "Deactivate" : "Activate"}
-                            </button>
-                          </div>
                         </div>
-                      </div>
 
-                      {/* Years and Semesters */}
-                      {isExpanded && (
-                        <div className="p-4 space-y-3">
-                          {Object.values(branchGroup.years).map((year: any) => {
-                            const isYearExpanded = expandedYears.has(year.id);
+                        {/* Years and Semesters */}
+                        {isExpanded && hasYears && (
+                          <div className="p-4 space-y-3">
+                            {Object.values(branchGroup.years).map((year: any) => {
+                              const isYearExpanded = expandedYears.has(year.id);
 
-                            return (
-                              <div key={year.id} className="border border-gray-100 rounded-lg">
-                                {/* Year Header */}
-                                <div className="p-3 bg-gray-25 border-b border-gray-100">
-                                  <div className="flex items-center justify-between">
-                                    <div className="flex items-center space-x-2">
-                                      <button
-                                        onClick={() => toggleYearExpansion(year.id)}
-                                        className="p-1 hover:bg-gray-200 rounded"
-                                      >
-                                        {isYearExpanded ? (
-                                          <ChevronDown className="w-3 h-3 text-gray-600" />
-                                        ) : (
-                                          <ChevronRight className="w-3 h-3 text-gray-600" />
-                                        )}
-                                      </button>
-                                      <span className="font-medium text-gray-900">Year {year.year_number}</span>
-                                      <span
-                                        className={`px-2 py-0.5 rounded text-xs font-medium ${
-                                          year.is_active ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-700"
-                                        }`}
-                                      >
-                                        {year.is_active ? "Active" : "Inactive"}
-                                      </span>
-                                    </div>
-
-                                    <button
-                                      onClick={() => toggleStatus("year", year.id, year.is_active)}
-                                      className={`px-2 py-1 rounded text-xs font-medium ${
-                                        year.is_active
-                                          ? "bg-red-50 text-red-600 hover:bg-red-100"
-                                          : "bg-green-50 text-green-600 hover:bg-green-100"
-                                      }`}
-                                    >
-                                      {year.is_active ? "Deactivate" : "Activate"}
-                                    </button>
-                                  </div>
-                                </div>
-
-                                {/* Semesters */}
-                                {isYearExpanded && (
-                                  <div className="p-3 grid grid-cols-2 gap-2">
-                                    {year.semesters.map((semester: any) => (
-                                      <div
-                                        key={semester.id}
-                                        className={`p-2 rounded border ${
-                                          semester.is_active
-                                            ? "border-green-200 bg-green-50"
-                                            : "border-gray-200 bg-gray-50"
-                                        }`}
-                                      >
-                                        <div className="flex items-center justify-between mb-1">
-                                          <span className="text-sm font-medium text-gray-900">
-                                            Sem {semester.semester_number}
-                                          </span>
-                                          <div className="flex items-center space-x-1">
-                                            {semester.is_current && (
-                                              <span className="px-1 py-0.5 bg-yellow-100 text-yellow-700 text-xs rounded">
-                                                Current
-                                              </span>
-                                            )}
-                                            <button
-                                              onClick={() => toggleStatus("semester", semester.id, semester.is_active)}
-                                              className={`px-1 py-0.5 rounded text-xs ${
-                                                semester.is_active
-                                                  ? "bg-red-100 text-red-600 hover:bg-red-200"
-                                                  : "bg-green-100 text-green-600 hover:bg-green-200"
-                                              }`}
-                                            >
-                                              {semester.is_active ? "✕" : "✓"}
-                                            </button>
-                                          </div>
-                                        </div>
-                                        <p className="text-xs text-gray-600">{semester.semester_label}</p>
+                              return (
+                                <div key={year.id} className="border border-gray-100 rounded-lg">
+                                  {/* Year Header */}
+                                  <div className="p-3 bg-gray-25 border-b border-gray-100">
+                                    <div className="flex items-center justify-between">
+                                      <div className="flex items-center space-x-2">
+                                        <button
+                                          onClick={() => toggleYearExpansion(year.id)}
+                                          className="p-1 hover:bg-gray-200 rounded"
+                                        >
+                                          {isYearExpanded ? (
+                                            <ChevronDown className="w-3 h-3 text-gray-600" />
+                                          ) : (
+                                            <ChevronRight className="w-3 h-3 text-gray-600" />
+                                          )}
+                                        </button>
+                                        <span className="font-medium text-gray-900">Year {year.year_number}</span>
+                                        <span
+                                          className={`px-2 py-0.5 rounded text-xs font-medium ${
+                                            year.is_active ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-700"
+                                          }`}
+                                        >
+                                          {year.is_active ? "Active" : "Inactive"}
+                                        </span>
                                       </div>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
 
-                {Object.keys(groupedHierarchy).length === 0 && (
-                  <div className="text-center py-12">
-                    <GraduationCap className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                    <h3 className="text-lg font-semibold text-gray-900 mb-2">No Branches Found</h3>
-                    <p className="text-gray-600">No branches are configured in the system yet.</p>
-                  </div>
+                                      <button
+                                        onClick={() => toggleStatus("year", year.id, year.is_active)}
+                                        className={`px-2 py-1 rounded text-xs font-medium ${
+                                          year.is_active
+                                            ? "bg-red-50 text-red-600 hover:bg-red-100"
+                                            : "bg-green-50 text-green-600 hover:bg-green-100"
+                                        }`}
+                                      >
+                                        {year.is_active ? "Deactivate" : "Activate"}
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {/* Semesters */}
+                                  {isYearExpanded && (
+                                    <div className="p-3 grid grid-cols-2 gap-2">
+                                      {year.semesters.map((semester: any) => (
+                                        <div
+                                          key={semester.id}
+                                          className={`p-2 rounded border ${
+                                            semester.is_active
+                                              ? "border-green-200 bg-green-50"
+                                              : "border-gray-200 bg-gray-50"
+                                          }`}
+                                        >
+                                          <div className="flex items-center justify-between mb-1">
+                                            <span className="text-sm font-medium text-gray-900">
+                                              Sem {semester.semester_number}
+                                            </span>
+                                            <div className="flex items-center space-x-1">
+                                              {semester.is_current && (
+                                                <span className="px-1 py-0.5 bg-yellow-100 text-yellow-700 text-xs rounded">
+                                                  Current
+                                                </span>
+                                              )}
+                                              <button
+                                                onClick={() =>
+                                                  toggleStatus("semester", semester.id, semester.is_active)
+                                                }
+                                                className={`px-1 py-0.5 rounded text-xs ${
+                                                  semester.is_active
+                                                    ? "bg-red-100 text-red-600 hover:bg-red-200"
+                                                    : "bg-green-100 text-green-600 hover:bg-green-200"
+                                                }`}
+                                              >
+                                                {semester.is_active ? "✕" : "✓"}
+                                              </button>
+                                            </div>
+                                          </div>
+                                          <p className="text-xs text-gray-600">{semester.semester_label}</p>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Show message if branch has no hierarchy */}
+                        {isExpanded && !hasYears && (
+                          <div className="p-4 text-center text-gray-500">
+                            <p className="text-sm">No year/semester structure configured for this branch.</p>
+                            <p className="text-xs mt-1">Run the database hierarchy setup to add years and semesters.</p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
                 )}
               </div>
             ) : (
-              <div className="space-y-6">
+              // Subjects Tab Content
+              <div className="space-y-4">
                 {loading ? (
-                  <div className="text-center py-12">
-                    <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2 text-blue-500" />
-                    <p className="text-gray-500">Loading subjects...</p>
+                  <div className="text-center py-8">
+                    <div className="inline-flex items-center px-4 py-2 text-sm font-medium text-gray-700">
+                      <Loader2 className="animate-spin -ml-1 mr-3 h-5 w-5 text-gray-700" />
+                      Loading subjects...
+                    </div>
                   </div>
                 ) : subjects.length === 0 ? (
-                  <div className="text-center py-12">
-                    <BookOpen className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                    <h3 className="text-lg font-semibold text-gray-900 mb-2">No Subjects Yet</h3>
-                    <p className="text-gray-600 mb-4">Get started by adding your first subject</p>
-                    <button
-                      onClick={() => setShowModal(true)}
-                      className="inline-flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                    >
-                      <Plus className="w-5 h-5" />
-                      <span>Add Subject</span>
-                    </button>
+                  <div className="text-center py-12 bg-gray-50 rounded-lg">
+                    <BookOpen className="mx-auto h-12 w-12 text-gray-400 mb-4" />
+                    <h3 className="text-lg font-medium text-gray-900 mb-2">No subjects found</h3>
+                    <p className="text-gray-600">No subjects have been configured yet.</p>
                   </div>
                 ) : (
                   <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead className="bg-gray-50 border-b border-gray-200">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
                         <tr>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Code</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                            Subject Name
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Subject
                           </th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Branches</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Semester</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Credits</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Branches
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Semester
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Credits
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Actions
+                          </th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-gray-200">
+                      <tbody className="bg-white divide-y divide-gray-200">
                         {subjects.map((subject) => (
                           <tr key={subject.id} className="hover:bg-gray-50">
-                            <td className="px-4 py-3">
-                              <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-blue-100 text-blue-700">
-                                {subject.code}
-                              </span>
-                            </td>
                             <td className="px-4 py-3">
                               <div>
                                 <p className="text-sm font-medium text-gray-900">{subject.name}</p>
@@ -727,14 +836,26 @@ export default function BranchesPage() {
                             </td>
                             <td className="px-4 py-3">
                               <div className="flex flex-wrap gap-1">
-                                {subject.branch_codes?.map((branchCode, index) => (
-                                  <span
-                                    key={index}
-                                    className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700"
-                                  >
-                                    {branchCode}
-                                  </span>
-                                )) || <span className="text-xs text-gray-500">No branches</span>}
+                                {(() => {
+                                  const branchCodes = Array.isArray(subject.branch_codes)
+                                    ? subject.branch_codes
+                                    : subject.branch_codes
+                                      ? [subject.branch_codes]
+                                      : [];
+
+                                  return branchCodes.length > 0 ? (
+                                    branchCodes.filter(Boolean).map((branchCode, index) => (
+                                      <span
+                                        key={`${subject.id}-${index}-${branchCode}`}
+                                        className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700"
+                                      >
+                                        {branchCode}
+                                      </span>
+                                    ))
+                                  ) : (
+                                    <span className="text-xs text-gray-500">No branches</span>
+                                  );
+                                })()}
                               </div>
                             </td>
                             <td className="px-4 py-3">
@@ -748,14 +869,14 @@ export default function BranchesPage() {
                                 <button
                                   onClick={() => openEditModal(subject)}
                                   className="p-1.5 text-blue-600 hover:bg-blue-50 rounded"
-                                  title="Edit"
+                                  title="Edit subject"
                                 >
                                   <Edit className="w-4 h-4" />
                                 </button>
                                 <button
                                   onClick={() => deleteSubject(subject.id)}
                                   className="p-1.5 text-red-600 hover:bg-red-50 rounded"
-                                  title="Delete"
+                                  title="Delete subject"
                                 >
                                   <Trash2 className="w-4 h-4" />
                                 </button>
@@ -771,217 +892,190 @@ export default function BranchesPage() {
             )}
           </div>
         </div>
-      </div>
 
-      {/* Add/Edit Subject Modal */}
-      {showModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between p-6 border-b border-gray-200">
-              <h2 className="text-xl font-bold text-gray-900">{editingSubject ? "Edit Subject" : "Add New Subject"}</h2>
-              <button
-                onClick={() => {
-                  setShowModal(false);
-                  resetForm();
-                }}
-                className="p-2 hover:bg-gray-100 rounded-lg"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSubmit} className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Subject Code *</label>
-                  <input
-                    type="text"
-                    required
-                    value={formData.code}
-                    onChange={(e) => setFormData({ ...formData, code: e.target.value.toUpperCase() })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                    placeholder="e.g., CS101"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Credits *</label>
-                  <input
-                    type="number"
-                    required
-                    min="1"
-                    max="10"
-                    value={formData.credits}
-                    onChange={(e) => setFormData({ ...formData, credits: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Subject Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                  placeholder="e.g., Data Structures and Algorithms"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Branches *
-                    {formData.branch_ids.length === 0 && <span className="text-red-500 text-xs ml-1">(Required)</span>}
-                  </label>
-                  <div className="mb-2 flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setFormData({ ...formData, branch_ids: branches.map((b) => b.id) })}
-                      className="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition-colors"
-                    >
-                      Select All
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setFormData({ ...formData, branch_ids: [] })}
-                      className="text-xs px-2 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors"
-                    >
-                      Clear All
-                    </button>
-                  </div>
-                  <div
-                    className={`space-y-2 max-h-40 overflow-y-auto border rounded-lg p-3 ${
-                      formData.branch_ids.length === 0 ? "border-red-300 bg-red-50" : "border-gray-300"
-                    }`}
+        {/* Add/Edit Subject Modal */}
+        {showModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-md max-h-[90vh] flex flex-col">
+              {/* Fixed Header */}
+              <div className="px-6 py-4 border-b border-gray-200 flex-shrink-0">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold text-gray-900">
+                    {editingSubject ? "Edit Subject" : "Add New Subject"}
+                  </h3>
+                  <button
+                    onClick={() => {
+                      setShowModal(false);
+                      resetForm();
+                    }}
+                    className="text-gray-400 hover:text-gray-600"
                   >
-                    {branches.map((branch) => (
-                      <label
-                        key={branch.id}
-                        className="flex items-center space-x-3 cursor-pointer hover:bg-gray-50 p-1 rounded"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={formData.branch_ids.includes(branch.id)}
-                          onChange={(e) => {
-                            const newBranchIds = e.target.checked
-                              ? [...formData.branch_ids, branch.id]
-                              : formData.branch_ids.filter((id) => id !== branch.id);
-                            setFormData({ ...formData, branch_ids: newBranchIds });
-                          }}
-                          className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
-                        />
-                        <span className="text-sm font-medium text-gray-700 flex-1">
-                          {branch.code} - {branch.name}
-                        </span>
-                        <span
-                          className={`px-2 py-0.5 text-xs rounded ${
-                            branch.is_active ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
-                          }`}
-                        >
-                          {branch.is_active ? "Active" : "Inactive"}
-                        </span>
-                      </label>
-                    ))}
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Scrollable Form Content */}
+              <div className="flex-1 overflow-y-auto">
+                <form onSubmit={handleSubmit} className="p-6">
+                <div className="space-y-4">
+                  <div>
+                    <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-1">
+                      Subject Name *
+                    </label>
+                    <input
+                      type="text"
+                      id="name"
+                      required
+                      value={formData.name}
+                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="e.g., Data Structures and Algorithms"
+                    />
                   </div>
-                  <p className={`text-xs mt-1 ${formData.branch_ids.length === 0 ? "text-red-500" : "text-gray-500"}`}>
-                    {formData.branch_ids.length === 0
-                      ? "Please select at least one branch"
-                      : `Selected: ${formData.branch_ids.length} of ${branches.length} branches`}
-                  </p>
-                  {formData.branch_ids.length > 0 && (
-                    <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded-lg">
-                      <p className="text-xs font-medium text-blue-700 mb-1">Selected Branches:</p>
-                      <div className="flex flex-wrap gap-1">
-                        {formData.branch_ids.map((branchId) => {
-                          const branch = branches.find((b) => b.id === branchId);
-                          return branch ? (
-                            <span
-                              key={branchId}
-                              className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700"
-                            >
-                              {branch.code}
-                            </span>
-                          ) : null;
-                        })}
-                      </div>
+
+                  <div>
+                    <label htmlFor="code" className="block text-sm font-medium text-gray-700 mb-1">
+                      Subject Code *
+                    </label>
+                    <input
+                      type="text"
+                      id="code"
+                      required
+                      value={formData.code}
+                      onChange={(e) => setFormData({ ...formData, code: e.target.value.toUpperCase() })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="e.g., CS201"
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="branches" className="block text-sm font-medium text-gray-700 mb-1">
+                      Branches *
+                    </label>
+                    <div className="space-y-2 max-h-40 overflow-y-auto border border-gray-300 rounded-lg p-3 bg-gray-50">
+                      {branches.map((branch) => (
+                        <label key={branch.id} className="flex items-center">
+                          <input
+                            type="checkbox"
+                            checked={formData.branch_ids.includes(branch.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setFormData({
+                                  ...formData,
+                                  branch_ids: [...formData.branch_ids, branch.id],
+                                });
+                              } else {
+                                setFormData({
+                                  ...formData,
+                                  branch_ids: formData.branch_ids.filter((id) => id !== branch.id),
+                                });
+                              }
+                            }}
+                            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          />
+                          <span className="ml-2 text-sm text-gray-700">
+                            {branch.code} - {branch.name}
+                          </span>
+                        </label>
+                      ))}
                     </div>
-                  )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label htmlFor="semester" className="block text-sm font-medium text-gray-700 mb-1">
+                        Semester *
+                      </label>
+                      <select
+                        id="semester"
+                        required
+                        value={formData.semester}
+                        onChange={(e) => setFormData({ ...formData, semester: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      >
+                        <option value="">Select Semester</option>
+                        {[1, 2, 3, 4, 5, 6, 7, 8].map((sem) => (
+                          <option key={sem} value={sem}>
+                            Semester {sem}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label htmlFor="credits" className="block text-sm font-medium text-gray-700 mb-1">
+                        Credits *
+                      </label>
+                      <input
+                        type="number"
+                        id="credits"
+                        required
+                        min="1"
+                        max="6"
+                        value={formData.credits}
+                        onChange={(e) => setFormData({ ...formData, credits: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        placeholder="3"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label htmlFor="syllabus_url" className="block text-sm font-medium text-gray-700 mb-1">
+                      Syllabus URL (Optional)
+                    </label>
+                    <input
+                      type="url"
+                      id="syllabus_url"
+                      value={formData.syllabus_url}
+                      onChange={(e) => setFormData({ ...formData, syllabus_url: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="https://example.com/syllabus.pdf"
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-1">
+                      Description (Optional)
+                    </label>
+                    <textarea
+                      id="description"
+                      rows={3}
+                      value={formData.description}
+                      onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="Brief description of the subject"
+                    />
+                  </div>
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Semester *</label>
-                  <select
-                    required
-                    value={formData.semester}
-                    onChange={(e) => setFormData({ ...formData, semester: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                <div className="flex justify-end space-x-3 mt-6">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowModal(false);
+                      resetForm();
+                    }}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
                   >
-                    <option value="">Select Semester</option>
-                    {[1, 2, 3, 4, 5, 6, 7, 8].map((sem) => (
-                      <option key={sem} value={sem}>
-                        Semester {sem}
-                      </option>
-                    ))}
-                  </select>
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={saving}
+                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 rounded-lg transition-colors flex items-center"
+                  >
+                    {saving && <Loader2 className="animate-spin -ml-1 mr-2 h-4 w-4" />}
+                    {editingSubject ? "Update Subject" : "Add Subject"}
+                  </button>
                 </div>
+              </form>
               </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-                <textarea
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  rows={3}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                  placeholder="Brief description of the subject..."
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Syllabus URL</label>
-                <input
-                  type="url"
-                  value={formData.syllabus_url}
-                  onChange={(e) => setFormData({ ...formData, syllabus_url: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                  placeholder="https://..."
-                />
-                <p className="text-xs text-gray-500 mt-1">Optional: Link to syllabus document</p>
-              </div>
-
-              <div className="flex space-x-3 pt-4">
-                <button
-                  type="submit"
-                  disabled={saving || formData.branch_ids.length === 0}
-                  className="flex-1 flex items-center justify-center space-x-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  {saving ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      <span>Saving...</span>
-                    </>
-                  ) : (
-                    <span>{editingSubject ? "Update Subject" : "Add Subject"}</span>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowModal(false);
-                    resetForm();
-                  }}
-                  className="px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </DashboardLayout>
   );
 }

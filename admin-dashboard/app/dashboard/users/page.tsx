@@ -34,8 +34,12 @@ export default function UsersPage() {
   const [filterBranch, setFilterBranch] = useState("all");
 
   useEffect(() => {
-    checkUserRole();
-    loadUsers();
+    async function initialize() {
+      console.log("Initializing UsersPage...");
+      await checkUserRole(); // Ensure role check completes first
+      await loadUsers(); // Then load users based on the role
+    }
+    initialize();
   }, []);
 
   async function checkUserRole() {
@@ -47,14 +51,17 @@ export default function UsersPage() {
 
       const { data: roleData, error } = await supabase.rpc("get_user_role", { user_id: user.id });
       if (error) throw error;
+      console.log("User role data:", roleData);
 
       const { data: canManage, error: canManageError } = await supabase.rpc("is_owner", { user_id: user.id });
       if (canManageError) throw canManageError;
 
-      setCurrentUserRole({
+      const updatedRole = {
         role: roleData || "student",
         canManageUsers: canManage || false,
-      });
+      };
+      console.log("Updated user role:", updatedRole);
+      setCurrentUserRole(updatedRole);
     } catch (error) {
       console.error("Error checking user role:", error);
     }
@@ -64,17 +71,46 @@ export default function UsersPage() {
     setLoading(true);
     try {
       // Use the special function for owners, regular query for others
+      console.log("Current user role in loadUsers:", currentUserRole);
       if (currentUserRole.canManageUsers) {
+        // Try the function first, if it fails, use direct query
         const { data, error } = await supabase.rpc("get_users_for_management");
-        if (error) throw error;
-        setUsers(data || []);
+        if (error) {
+          console.log("RPC function failed, using direct query:", error.message);
+          console.log("Fallback to direct query...");
+          // Fallback to direct query with all fields
+          const { data: directData, error: directError } = await supabase
+            .from("users")
+            .select(
+              `
+              id, email, name, branch_id, year, semester, roll_number,
+              course, photo_url, is_admin, last_login, created_at,
+              updated_at, phone, branch_year_id, branch_semester_id, role,
+              branches(name)
+            `,
+            )
+            .order("created_at", { ascending: false });
+
+          if (directError) throw directError;
+          const mappedUsers = (directData || []).map((user) => ({
+            ...user,
+            branch_name: (user.branches as any)?.name,
+          })) as unknown as User[];
+          setUsers(mappedUsers);
+          console.log("Users state after mapping (direct query):", mappedUsers);
+        } else {
+          console.log("Direct query users data:", data);
+          setUsers(data || []);
+        }
       } else {
         // Regular users can only see basic user list
         const { data, error } = await supabase
           .from("users")
           .select(
             `
-            id, email, name, role, is_admin, created_at,
+            id, email, name, branch_id, year, semester, roll_number,
+            course, photo_url, is_admin, last_login, created_at,
+            updated_at, phone, branch_year_id, branch_semester_id, role,
             branches(name)
           `,
           )
@@ -85,10 +121,16 @@ export default function UsersPage() {
           ...user,
           branch_name: (user.branches as any)?.name,
         })) as unknown as User[];
+        console.log("Mapped users data:", mappedUsers);
         setUsers(mappedUsers);
+        console.log("Users state after mapping (RPC query):", mappedUsers);
       }
     } catch (error) {
-      console.error("Error loading users:", error);
+      console.error("Error loading users:", {
+        message: error instanceof Error ? error.message : "Unknown error",
+        stack: error instanceof Error ? error.stack : null,
+        rawError: error,
+      });
     } finally {
       setLoading(false);
     }
@@ -164,6 +206,14 @@ export default function UsersPage() {
     const matchesBranch = filterBranch === "all" || user.branch_id === filterBranch;
     return matchesSearch && matchesRole && matchesBranch;
   });
+
+  console.log("🔍 DEBUG INFO:");
+  console.log("Current User Role:", currentUserRole);
+  console.log("Can Manage Users:", currentUserRole.canManageUsers);
+  console.log("Filtered Users:", filteredUsers.map(u => ({ email: u.email, role: u.role })));
+  console.log("Search Term:", searchTerm);
+  console.log("Filter Role:", filterRole);
+  console.log("Filter Branch:", filterBranch);
 
   const stats = {
     total: users.length,
@@ -396,13 +446,14 @@ export default function UsersPage() {
                       <td className="px-6 py-4 text-sm text-gray-500">
                         {user.last_login ? new Date(user.last_login).toLocaleDateString() : "Never"}
                       </td>
+                      {/* Debug Info - moved to useEffect */}
                       {currentUserRole.canManageUsers && (
                         <td className="px-6 py-4">
                           <div className="flex items-center space-x-2">
                             {user.role === "student" && (
                               <button
                                 onClick={() => promoteToAdmin(user.id)}
-                                className="text-sm text-purple-600 hover:text-purple-800 font-medium"
+                                className="text-sm text-purple-600 hover:text-purple-800 font-medium bg-purple-50 px-3 py-1 rounded-lg border border-purple-200"
                               >
                                 Make Admin
                               </button>
@@ -410,7 +461,7 @@ export default function UsersPage() {
                             {user.role === "admin" && (
                               <button
                                 onClick={() => demoteToStudent(user.id)}
-                                className="text-sm text-gray-600 hover:text-gray-800 font-medium"
+                                className="text-sm text-gray-600 hover:text-gray-800 font-medium bg-gray-50 px-3 py-1 rounded-lg border border-gray-200"
                               >
                                 Remove Admin
                               </button>
@@ -418,15 +469,23 @@ export default function UsersPage() {
                             {user.role !== "owner" && (
                               <button
                                 onClick={() => removeUser(user.id)}
-                                className="text-sm text-red-600 hover:text-red-800 font-medium flex items-center space-x-1"
+                                className="text-sm text-red-600 hover:text-red-800 font-medium flex items-center space-x-1 bg-red-50 px-3 py-1 rounded-lg border border-red-200"
                                 title="Remove User"
                               >
                                 <Trash2 className="w-3 h-3" />
                                 <span>Remove</span>
                               </button>
                             )}
-                            {user.role === "owner" && <span className="text-sm text-gray-400 italic">Protected</span>}
+                            {user.role === "owner" && <span className="text-sm text-gray-400 italic bg-yellow-50 px-3 py-1 rounded-lg">Protected</span>}
                           </div>
+                        </td>
+                      )}
+                      {/* Debug: Show if canManageUsers is false */}
+                      {!currentUserRole.canManageUsers && (
+                        <td className="px-6 py-4">
+                          <span className="text-xs text-red-500 bg-red-50 px-2 py-1 rounded">
+                            No permissions (Role: {currentUserRole.role})
+                          </span>
                         </td>
                       )}
                     </tr>

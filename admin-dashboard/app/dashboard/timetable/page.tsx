@@ -139,14 +139,16 @@ export default function TimetablePage() {
       const { data: branchesData } = await supabase.from("branches").select("*").order("name");
       setBranches(branchesData || []);
 
-      // Fetch subjects
-      let subjectsQuery = supabase.from("subjects").select("*");
+      // Fetch subjects using direct branch_id and semester columns
+      let subjectsQuery = supabase.from("subjects").select("*").eq("is_active", true);
+
       if (selectedBranch) {
         subjectsQuery = subjectsQuery.eq("branch_id", selectedBranch);
       }
       if (selectedSemester) {
         subjectsQuery = subjectsQuery.eq("semester", parseInt(selectedSemester));
       }
+
       const { data: subjectsData } = await subjectsQuery.order("semester").order("name");
       setSubjects(subjectsData || []);
 

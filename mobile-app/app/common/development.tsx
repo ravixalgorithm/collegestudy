@@ -13,110 +13,99 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { supabase } from "../../src/lib/supabase";
-import {
-  ArrowLeft,
-  Globe,
-  Smartphone,
-  Server,
-  Database,
-  Code,
-  FileText,
-  Download,
-  ExternalLink,
-  Plus,
-  Search,
-  BookOpen,
-  TrendingUp,
-  Target,
-  Clock,
-  Star,
-  Users,
-  Monitor,
-  Cloud,
-} from "lucide-react-native";
+import { ArrowLeft, Globe, FileText, ExternalLink, TrendingUp, Target, Clock, Users, Star, Download, Eye } from "lucide-react-native";
 
-interface DevelopmentTrack {
+// Updated interfaces for unified schema
+interface Topic {
   id: string;
+  category_id: string;
   title: string;
   description: string;
-  level: "Beginner" | "Intermediate" | "Advanced";
-  notes: DevelopmentNote[];
-  technologies: string[];
+  difficulty: "Beginner" | "Easy" | "Medium" | "Hard";
+  sort_order: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  notes: Resource[];
 }
 
-interface DevelopmentNote {
+interface Resource {
   id: string;
+  category_id: string;
+  topic_id: string;
   title: string;
   description: string;
-  file_url: string;
-  file_type: string;
+  resource_type: 'note' | 'ai_tool';
+  file_url?: string;
+  file_type?: string;
   file_size?: string;
-  is_featured: boolean;
-  is_approved: boolean;
-  is_verified: boolean;
-  uploaded_by: string;
-  created_at: string;
+  tool_url?: string;
+  pricing_type?: string;
+  tags: string[];
+  thumbnail_url?: string;
   downloads: number;
+  views: number;
   rating: number;
   rating_count: number;
-  views: number;
-  tags: string[];
+  is_featured: boolean;
+  is_approved: boolean;
+  is_active: boolean;
+  uploaded_by?: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export default function DevelopmentNotes() {
   const router = useRouter();
-  const [tracks, setTracks] = useState<DevelopmentTrack[]>([]);
+  const [topics, setTopics] = useState<Topic[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
-    loadTracksAndNotes();
+    loadTopicsAndNotes();
   }, []);
 
-  const loadTracksAndNotes = async () => {
+  const loadTopicsAndNotes = async () => {
     try {
       setLoading(true);
 
-      // Load topics for Development category
+      // Load topics for Development category using unified schema
       const { data: topicsData, error: topicsError } = await supabase
-        .from("common_topics")
-        .select("id, title, description, difficulty, technologies, is_active, created_at, updated_at")
+        .from("topics")
+        .select("*")
         .eq("category_id", "development")
         .eq("is_active", true)
-        .order("title");
+        .order("sort_order");
 
       if (topicsError) throw topicsError;
 
-      // Load notes for each topic
-      const tracksWithNotes = await Promise.all(
+      // Load notes for each topic using unified resources table
+      const topicsWithNotes = await Promise.all(
         (topicsData || []).map(async (topic) => {
           const { data: notesData, error: notesError } = await supabase
-            .from("common_notes")
+            .from("resources")
             .select("*")
             .eq("topic_id", topic.id)
+            .eq("resource_type", "note")
             .eq("is_approved", true)
+            .eq("is_active", true)
             .order("created_at", { ascending: false });
 
           if (notesError) {
-            console.error("Error loading notes for topic:", topic.title, notesError);
+            console.log("No notes found for topic:", topic.title);
           }
 
-          // Map to DevelopmentTrack interface
           return {
-            id: topic.id,
-            title: topic.title,
-            description: topic.description,
-            level: topic.difficulty || "Intermediate",
+            ...topic,
             notes: notesData || [],
-            technologies: topic.technologies || [],
           };
         }),
       );
 
-      setTracks(tracksWithNotes);
+      setTopics(topicsWithNotes);
     } catch (error) {
-      console.error("Error loading development tracks and notes:", error);
-      Alert.alert("Error", "Failed to load tracks. Please try again.");
+      console.log("Could not load Development content - may be empty or permission restricted");
+      // Don't show alert for empty data - just show empty state
     } finally {
       setLoading(false);
     }
@@ -124,33 +113,53 @@ export default function DevelopmentNotes() {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadTracksAndNotes();
+    await loadTopicsAndNotes();
     setRefreshing(false);
   };
 
-  const getLevelColor = (level: string) => {
-    switch (level) {
-      case "Beginner":
-        return "#52c41a";
-      case "Intermediate":
-        return "#fa8c16";
-      case "Advanced":
-        return "#ff4d4f";
-      default:
-        return "#666";
+  const handleDownload = async (note: Resource) => {
+    try {
+      if (note.file_url) {
+        // Update download count
+        await supabase
+          .from("resources")
+          .update({ downloads: (note.downloads || 0) + 1 })
+          .eq("id", note.id);
+
+        // Open the file URL
+        const { Linking } = require("react-native");
+        await Linking.openURL(note.file_url);
+        
+        // Refresh data to show updated download count
+        loadTopicsAndNotes();
+      }
+    } catch (error) {
+      console.error("Error downloading file:", error);
+      Alert.alert("Error", "Failed to download file. Please try again.");
     }
   };
 
-  const handleTrackPress = (track: DevelopmentTrack) => {
-    router.push({
-      pathname: "/common/notes/[category]",
-      params: {
-        category: "development",
-        topicId: track.id,
-        topicTitle: track.title,
-        topicDescription: track.description,
-      },
-    });
+  const getDifficultyColor = (difficulty: string) => {
+    switch (difficulty) {
+      case "Beginner":
+        return "#10B981"; // Green
+      case "Easy":
+        return "#3B82F6"; // Blue
+      case "Medium":
+        return "#F59E0B"; // Yellow
+      case "Hard":
+        return "#EF4444"; // Red
+      default:
+        return "#6B7280"; // Gray
+    }
+  };
+
+  const formatFileSize = (size?: string) => {
+    return size || "Unknown size";
+  };
+
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString();
   };
 
   if (loading) {
@@ -158,8 +167,8 @@ export default function DevelopmentNotes() {
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#52c41a" />
-          <Text style={styles.loadingText}>Loading development tracks...</Text>
+          <ActivityIndicator size="large" color="#10B981" />
+          <Text style={styles.loadingText}>Loading Development resources...</Text>
         </View>
       </SafeAreaView>
     );
@@ -168,170 +177,133 @@ export default function DevelopmentNotes() {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
-
+      
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-          <ArrowLeft color="#333" size={24} />
+        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <ArrowLeft size={24} color="#374151" />
         </TouchableOpacity>
         <View style={styles.headerContent}>
-          <Text style={styles.headerTitle}>Development Notes</Text>
-          <Text style={styles.headerSubtitle}>Web, Mobile & Backend</Text>
+          <View style={styles.headerIcon}>
+            <Globe size={28} color="#10B981" />
+          </View>
+          <View>
+            <Text style={styles.headerTitle}>Web Development</Text>
+            <Text style={styles.headerSubtitle}>{topics.length} topics available</Text>
+          </View>
         </View>
-        <View style={styles.placeholder} />
       </View>
 
       <ScrollView
-        style={styles.scrollView}
+        style={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        {/* Hero Section */}
-        <View style={styles.heroSection}>
-          <View style={styles.heroIcon}>
-            <Code color="#52c41a" size={32} />
-          </View>
-          <Text style={styles.heroTitle}>Master Modern Development</Text>
-          <Text style={styles.heroDescription}>
-            Comprehensive resources covering frontend, backend, mobile, and full-stack development with the latest
-            technologies and best practices.
-          </Text>
-
-          <View style={styles.statsRow}>
-            <View style={styles.statItem}>
-              <Text style={styles.statNumber}>6</Text>
-              <Text style={styles.statLabel}>Tracks</Text>
+        {topics.map((topic) => (
+          <View key={topic.id} style={styles.topicCard}>
+            <View style={styles.topicHeader}>
+              <View style={styles.topicInfo}>
+                <Text style={styles.topicTitle}>{topic.title}</Text>
+                <Text style={styles.topicDescription}>{topic.description}</Text>
+              </View>
+              <View style={[styles.difficultyBadge, { backgroundColor: getDifficultyColor(topic.difficulty) }]}>
+                <Text style={styles.difficultyText}>{topic.difficulty}</Text>
+              </View>
             </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statItem}>
-              <Text style={styles.statNumber}>80+</Text>
-              <Text style={styles.statLabel}>Resources</Text>
+
+            <View style={styles.topicStats}>
+              <View style={styles.statItem}>
+                <FileText size={16} color="#6B7280" />
+                <Text style={styles.statText}>{topic.notes.length} notes</Text>
+              </View>
+              <View style={styles.statItem}>
+                <Download size={16} color="#6B7280" />
+                <Text style={styles.statText}>
+                  {topic.notes.reduce((sum, note) => sum + (note.downloads || 0), 0)} downloads
+                </Text>
+              </View>
             </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statItem}>
-              <Text style={styles.statNumber}>1000+</Text>
-              <Text style={styles.statLabel}>Downloads</Text>
-            </View>
-          </View>
-        </View>
 
-        {/* Development Tracks */}
-        <View style={styles.tracksSection}>
-          <Text style={styles.sectionTitle}>Development Tracks</Text>
-          <Text style={styles.sectionSubtitle}>Choose your learning path and build real-world projects</Text>
-
-          {tracks.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Code color="#ccc" size={48} />
-              <Text style={styles.emptyTitle}>No Tracks Available</Text>
-              <Text style={styles.emptyDescription}>
-                Development tracks will appear here once they are added by administrators.
-              </Text>
-            </View>
-          ) : (
-            <View style={styles.tracksGrid}>
-              {tracks.map((track) => (
-                <TouchableOpacity key={track.id} style={styles.trackCard} onPress={() => handleTrackPress(track)}>
-                  
-
-                  <View style={styles.trackContent}>
-                    <Text style={styles.trackTitle}>{track.title}</Text>
-                    
-                    <Text style={styles.trackDescription}>{track.description}</Text>
-
-                    <View style={styles.technologiesContainer}>
-                      {Array.isArray(track.technologies) &&
-                        track.technologies.slice(0, 3).map((tech, index) => (
-                          <View key={index} style={styles.techBadge}>
-                            <Text style={styles.techText}>{tech}</Text>
-                          </View>
-                        ))}
-                      {Array.isArray(track.technologies) && track.technologies.length > 3 && (
-                        <View style={styles.techBadge}>
-                          <Text style={styles.techText}>+{track.technologies.length - 3}</Text>
+            {topic.notes.length > 0 ? (
+              <View style={styles.notesContainer}>
+                {topic.notes.map((note) => (
+                  <TouchableOpacity
+                    key={note.id}
+                    style={styles.noteCard}
+                    onPress={() => handleDownload(note)}
+                  >
+                    <View style={styles.noteHeader}>
+                      <View style={styles.noteInfo}>
+                        <Text style={styles.noteTitle}>{note.title}</Text>
+                        <Text style={styles.noteDescription} numberOfLines={2}>
+                          {note.description}
+                        </Text>
+                      </View>
+                      {note.is_featured && (
+                        <View style={styles.featuredBadge}>
+                          <Star size={12} color="#F59E0B" />
                         </View>
                       )}
                     </View>
-                    
-                    <View style={[styles.levelBadge, { backgroundColor: getLevelColor(track.level) }]}>
-                      <Text style={styles.levelText}>{track.level}</Text>
+
+                    <View style={styles.noteDetails}>
+                      <View style={styles.noteMetadata}>
+                        <Text style={styles.fileType}>{note.file_type?.toUpperCase()}</Text>
+                        <Text style={styles.fileSize}>{formatFileSize(note.file_size)}</Text>
+                      </View>
+                      <View style={styles.noteStats}>
+                        <View style={styles.statItem}>
+                          <Download size={14} color="#6B7280" />
+                          <Text style={styles.statValue}>{note.downloads}</Text>
+                        </View>
+                        <View style={styles.statItem}>
+                          <Eye size={14} color="#6B7280" />
+                          <Text style={styles.statValue}>{note.views}</Text>
+                        </View>
+                        {note.rating > 0 && (
+                          <View style={styles.statItem}>
+                            <Star size={14} color="#F59E0B" />
+                            <Text style={styles.statValue}>{note.rating.toFixed(1)}</Text>
+                          </View>
+                        )}
+                      </View>
                     </View>
 
-                    <View style={styles.trackStats}>
-                      <View style={styles.trackStat}>
-                        <FileText color="#666" size={14} />
-                        <Text style={styles.trackStatText}>{track.notes.length} Resources</Text>
+                    {note.tags && note.tags.length > 0 && (
+                      <View style={styles.tagsContainer}>
+                        {note.tags.slice(0, 3).map((tag, index) => (
+                          <View key={index} style={styles.tag}>
+                            <Text style={styles.tagText}>{tag}</Text>
+                          </View>
+                        ))}
+                        {note.tags.length > 3 && (
+                          <Text style={styles.moreTagsText}>+{note.tags.length - 3} more</Text>
+                        )}
                       </View>
-                      <View style={styles.trackStat}>
-                        <Users color="#666" size={14} />
-                        <Text style={styles.trackStatText}>{track.notes.length > 0 ? "Active" : "Coming Soon"}</Text>
-                      </View>
+                    )}
+
+                    <View style={styles.downloadButton}>
+                      <ExternalLink size={16} color="#10B981" />
+                      <Text style={styles.downloadButtonText}>Download</Text>
                     </View>
-                  </View>
-
-                  <View style={styles.trackFooter}>
-                    <Text style={styles.exploreText}>Start Learning</Text>
-                    <ExternalLink color="#1890ff" size={16} />
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-        </View>
-
-        {/* Learning Path Section */}
-        <View style={styles.pathSection}>
-          <Text style={styles.sectionTitle}>Recommended Learning Path</Text>
-
-          <View style={styles.pathSteps}>
-            <View style={styles.pathStep}>
-              <View style={styles.stepNumber}>
-                <Text style={styles.stepNumberText}>1</Text>
+                  </TouchableOpacity>
+                ))}
               </View>
-              <View style={styles.stepContent}>
-                <Text style={styles.stepTitle}>Frontend Basics</Text>
-                <Text style={styles.stepDescription}>Start with HTML, CSS, and JavaScript fundamentals</Text>
+            ) : (
+              <View style={styles.emptyState}>
+                <FileText size={48} color="#D1D5DB" />
+                <Text style={styles.emptyStateText}>No notes available for this topic</Text>
               </View>
-            </View>
-
-            <View style={styles.pathConnector} />
-
-            <View style={styles.pathStep}>
-              <View style={styles.stepNumber}>
-                <Text style={styles.stepNumberText}>2</Text>
-              </View>
-              <View style={styles.stepContent}>
-                <Text style={styles.stepTitle}>Framework Mastery</Text>
-                <Text style={styles.stepDescription}>Learn React or Vue.js for modern frontend development</Text>
-              </View>
-            </View>
-
-            <View style={styles.pathConnector} />
-
-            <View style={styles.pathStep}>
-              <View style={styles.stepNumber}>
-                <Text style={styles.stepNumberText}>3</Text>
-              </View>
-              <View style={styles.stepContent}>
-                <Text style={styles.stepTitle}>Backend Development</Text>
-                <Text style={styles.stepDescription}>Build APIs with Node.js, Python, or Java</Text>
-              </View>
-            </View>
-
-            <View style={styles.pathConnector} />
-
-            <View style={styles.pathStep}>
-              <View style={styles.stepNumber}>
-                <Text style={styles.stepNumberText}>4</Text>
-              </View>
-              <View style={styles.stepContent}>
-                <Text style={styles.stepTitle}>Full Stack Projects</Text>
-                <Text style={styles.stepDescription}>Combine frontend and backend to build complete applications</Text>
-              </View>
-            </View>
+            )}
           </View>
-        </View>
+        ))}
 
-        <View style={styles.bottomSpacing} />
+        {topics.length === 0 && (
+          <View style={styles.emptyState}>
+            <Globe size={64} color="#D1D5DB" />
+            <Text style={styles.emptyStateTitle}>No Development Topics Found</Text>
+            <Text style={styles.emptyStateText}>Check back later for new content</Text>
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -340,7 +312,7 @@ export default function DevelopmentNotes() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f8f9fa",
+    backgroundColor: "#F9FAFB",
   },
   loadingContainer: {
     flex: 1,
@@ -348,321 +320,229 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   loadingText: {
-    marginTop: 12,
+    marginTop: 16,
     fontSize: 16,
-    color: "#666",
+    color: "#6B7280",
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: "#ffffff",
+    padding: 16,
+    backgroundColor: "#FFFFFF",
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
+    borderBottomColor: "#E5E7EB",
   },
   backButton: {
+    marginRight: 16,
     padding: 8,
   },
   headerContent: {
-    flex: 1,
+    flexDirection: "row",
     alignItems: "center",
+    flex: 1,
+  },
+  headerIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: "#ECFDF5",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
   },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#333",
+    fontSize: 20,
+    fontWeight: "600",
+    color: "#111827",
   },
   headerSubtitle: {
     fontSize: 14,
-    color: "#666",
+    color: "#6B7280",
     marginTop: 2,
   },
-  placeholder: {
-    width: 40,
-  },
-  scrollView: {
+  content: {
     flex: 1,
+    padding: 16,
   },
-  heroSection: {
-    backgroundColor: "#ffffff",
-    margin: 16,
-    borderRadius: 20,
-    padding: 24,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#f0f0f0",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  heroIcon: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: "#f6ffed",
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 16,
-  },
-  heroTitle: {
-    fontSize: 22,
-    fontWeight: "700",
-    color: "#333",
-    textAlign: "center",
-    marginBottom: 8,
-  },
-  heroDescription: {
-    fontSize: 16,
-    color: "#666",
-    textAlign: "center",
-    lineHeight: 24,
-    marginBottom: 24,
-  },
-  statsRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#f8f9fa",
+  topicCard: {
+    backgroundColor: "#FFFFFF",
     borderRadius: 12,
     padding: 16,
-    width: "100%",
+    marginBottom: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  topicHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 12,
+  },
+  topicInfo: {
+    flex: 1,
+    marginRight: 12,
+  },
+  topicTitle: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: 4,
+  },
+  topicDescription: {
+    fontSize: 14,
+    color: "#6B7280",
+    lineHeight: 20,
+  },
+  difficultyBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  difficultyText: {
+    fontSize: 12,
+    fontWeight: "500",
+    color: "#FFFFFF",
+  },
+  topicStats: {
+    flexDirection: "row",
+    marginBottom: 16,
   },
   statItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginRight: 16,
+  },
+  statText: {
+    fontSize: 14,
+    color: "#6B7280",
+    marginLeft: 4,
+  },
+  statValue: {
+    fontSize: 12,
+    color: "#6B7280",
+    marginLeft: 4,
+  },
+  notesContainer: {
+    gap: 12,
+  },
+  noteCard: {
+    backgroundColor: "#F9FAFB",
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  noteHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 8,
+  },
+  noteInfo: {
     flex: 1,
+    marginRight: 8,
+  },
+  noteTitle: {
+    fontSize: 16,
+    fontWeight: "500",
+    color: "#111827",
+    marginBottom: 4,
+  },
+  noteDescription: {
+    fontSize: 14,
+    color: "#6B7280",
+    lineHeight: 18,
+  },
+  featuredBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "#FEF3C7",
+    justifyContent: "center",
     alignItems: "center",
   },
-  statNumber: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#52c41a",
-    marginBottom: 4,
+  noteDetails: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
   },
-  statLabel: {
+  noteMetadata: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  fileType: {
     fontSize: 12,
-    color: "#666",
     fontWeight: "500",
+    color: "#10B981",
+    backgroundColor: "#ECFDF5",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginRight: 8,
   },
-  statDivider: {
-    width: 1,
-    height: 30,
-    backgroundColor: "#e5e7eb",
-    marginHorizontal: 16,
+  fileSize: {
+    fontSize: 12,
+    color: "#6B7280",
   },
-  tracksSection: {
-    margin: 16,
+  noteStats: {
+    flexDirection: "row",
+    alignItems: "center",
   },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#333",
+  tagsContainer: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginBottom: 8,
+  },
+  tag: {
+    backgroundColor: "#E5E7EB",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginRight: 4,
     marginBottom: 4,
   },
-  sectionSubtitle: {
+  tagText: {
+    fontSize: 10,
+    color: "#374151",
+  },
+  moreTagsText: {
+    fontSize: 10,
+    color: "#6B7280",
+    alignSelf: "center",
+  },
+  downloadButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#ECFDF5",
+    paddingVertical: 8,
+    borderRadius: 6,
+  },
+  downloadButtonText: {
     fontSize: 14,
-    color: "#666",
-    marginBottom: 20,
+    fontWeight: "500",
+    color: "#10B981",
+    marginLeft: 4,
   },
   emptyState: {
     alignItems: "center",
-    padding: 40,
-    backgroundColor: "#ffffff",
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#f0f0f0",
+    justifyContent: "center",
+    paddingVertical: 32,
   },
-  emptyTitle: {
+  emptyStateTitle: {
     fontSize: 18,
-    fontWeight: "600",
-    color: "#333",
+    fontWeight: "500",
+    color: "#374151",
     marginTop: 16,
     marginBottom: 8,
   },
-  emptyDescription: {
+  emptyStateText: {
     fontSize: 14,
-    color: "#666",
+    color: "#6B7280",
     textAlign: "center",
-  },
-  tracksGrid: {
-    gap: 16,
-  },
-  trackCard: {
-    backgroundColor: "#ffffff",
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#f0f0f0",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-    overflow: "hidden",
-  },
-  trackHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: 16,
-    backgroundColor: "#1890ff15",
-  },
-  trackIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#1890ff",
-  },
-  levelBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    width: "fit-content",
-    minWidth: 40,
-    maxWidth: 80,
-    marginBottom: 10
-  },
-  levelText: {
-    fontSize: 10,
-    fontWeight: "600",
-    color: "#ffffff",
-    textAlign: "center",
-    
-  },
-  trackContent: {
-    padding: 16,
-  },
-  trackTitle: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#333",
-    marginBottom: 4,
-  },
-  trackDescription: {
-    fontSize: 14,
-    color: "#666",
-    lineHeight: 20,
-    marginBottom: 12,
-  },
-  technologiesContainer: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 6,
-    marginBottom: 12,
-  },
-  techBadge: {
-    backgroundColor: "#f0f2f5",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  techText: {
-    fontSize: 11,
-    fontWeight: "500",
-    color: "#666",
-  },
-  trackStats: {
-    flexDirection: "row",
-    gap: 16,
-  },
-  trackStat: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-  trackStatText: {
-    fontSize: 12,
-    color: "#666",
-    fontWeight: "500",
-  },
-  trackFooter: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: 16,
-    backgroundColor: "#f8f9fa",
-    borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
-  },
-  exploreText: {
-    fontSize: 13,
-    fontWeight: "500",
-    color: "#666",
-  },
-  featuredBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    backgroundColor: "#fff7e6",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    marginTop: 8,
-    alignSelf: "flex-start",
-  },
-  featuredText: {
-    fontSize: 11,
-    fontWeight: "600",
-    color: "#fa8c16",
-  },
-  pathSection: {
-    margin: 16,
-    marginTop: 8,
-  },
-  pathSteps: {
-    backgroundColor: "#ffffff",
-    borderRadius: 16,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: "#f0f0f0",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  pathStep: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 16,
-  },
-  stepNumber: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "#52c41a",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  stepNumberText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#ffffff",
-  },
-  stepContent: {
-    flex: 1,
-  },
-  stepTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#333",
-    marginBottom: 2,
-  },
-  stepDescription: {
-    fontSize: 14,
-    color: "#666",
-    lineHeight: 20,
-  },
-  pathConnector: {
-    width: 2,
-    height: 24,
-    backgroundColor: "#e5e7eb",
-    marginLeft: 15,
-    marginVertical: 8,
-  },
-  bottomSpacing: {
-    height: 32,
   },
 });

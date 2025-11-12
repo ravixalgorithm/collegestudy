@@ -4,8 +4,18 @@
   "description": "Migration utilities for HBTU College Study app",
   "private": true,
   "scripts": {
+    "setup": "node setup-database-tools.js",
+    "setup:env": "node setup-database-tools.js --setup",
+    "setup:test": "node setup-database-tools.js --test",
+    "setup:show": "node setup-database-tools.js --show",
     "fix-expires-at": "node fix_expires_at.js",
-    "migrate": "node fix_expires_at.js"
+    "migrate": "node fix_expires_at.js",
+    "diagnose": "node database-diagnostics.js",
+    "db:check": "node database-diagnostics.js",
+    "db:health": "node database-diagnostics.js",
+    "db:fix": "node fix_expires_at.js",
+    "fix:branches": "node fix-branches-database.js",
+    "fix:rls": "node fix-rls-policies.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.78.0",

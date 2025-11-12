@@ -23,16 +23,16 @@ const slides = [
     title: "College Study",
     subtitle: "Your Academic Journey Starts Here",
     description: "Everything you need for academic success, designed by students for students.",
-    color: "#0066cc",
+    color: "#1E3A8A",
     showLogo: true,
     showStats: true,
   },
   {
     id: 1,
     title: "Smart Resources",
-    subtitle: "Quality Notes & Materials",
-    description: "Access verified study materials organized by branch and semester.",
-    color: "#52c41a",
+    subtitle: "Quality Notes & Study Materials",
+    description: "Access verified curated study materials organized by branch's and semester's.",
+    color: "#2e5339",
     features: [
       { icon: BookOpen, title: "Verified Notes", desc: "Quality assured" },
       { icon: Download, title: "Offline Access", desc: "Study anywhere" },
@@ -44,11 +44,11 @@ const slides = [
     title: "Stay Organized",
     subtitle: "Never Miss Important Dates",
     description: "Smart timetable management and exam reminders to keep you ahead.",
-    color: "#fa8c16",
+    color: "#37718e",
     features: [
       { icon: Calendar, title: "Smart Schedule", desc: "Auto-sync classes" },
-      { icon: Bell, title: "Reminders", desc: "Never miss exams" },
-      { icon: Target, title: "Goal Tracking", desc: "Monitor progress" },
+      { icon: Bell, title: "Reminders", desc: "Never miss any updates " },
+      { icon: Target, title: "Exam Tracking", desc: "Never miss exams" },
     ],
   },
   {
@@ -56,7 +56,7 @@ const slides = [
     title: "Campus Connect",
     subtitle: "Stay Connected & Informed",
     description: "Discover opportunities and connect with your college community.",
-    color: "#722ed1",
+    color: "#1E3A8A",
     features: [
       { icon: Users, title: "Events", desc: "Campus activities" },
       { icon: TrendingUp, title: "Opportunities", desc: "Career growth" },
@@ -65,10 +65,11 @@ const slides = [
   },
   {
     id: 4,
-    title: "Meet the Team",
+    title: "The Core Team",
     subtitle: "Built by Students, For Students",
-    description: "Created with passion by college students to make academic life easier.",
-    color: "#eb2f96",
+    description:
+      "It started with our struggle to find the right notes, now it’s a mission to make sure no student faces the same.",
+    color: "#374151",
     showTeam: true,
   },
 ];
@@ -136,24 +137,24 @@ export default function Welcome() {
     return (
       <View style={styles.statsContainer}>
         <View style={styles.statItem}>
-          <Text style={styles.statNumber}>1000+</Text>
+          <Text style={styles.statNumber}>1500+</Text>
           <Text style={styles.statLabel}>Students</Text>
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statItem}>
-          <Text style={styles.statNumber}>500+</Text>
+          <Text style={styles.statNumber}>550+</Text>
           <Text style={styles.statLabel}>Resources</Text>
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statItem}>
-          <Text style={styles.statNumber}>98%</Text>
-          <Text style={styles.statLabel}>Satisfaction</Text>
+          <Text style={styles.statNumber}>100%</Text>
+          <Text style={styles.statLabel}>Verified Notes </Text>
         </View>
       </View>
     );
   };
 
-  const renderAvatar = (uri, initials, key) => {
+  const renderAvatar = (source, initials, key) => {
     if (imageErrors[key]) {
       return (
         <View style={styles.avatarFallback}>
@@ -161,7 +162,7 @@ export default function Welcome() {
         </View>
       );
     }
-    return <Image source={{ uri }} style={styles.avatarImage} onError={() => handleImageError(key)} />;
+    return <Image source={source} style={styles.avatarImage} onError={() => handleImageError(key)} />;
   };
 
   const renderTeam = () => {
@@ -169,30 +170,22 @@ export default function Welcome() {
       <View style={styles.teamContainer}>
         <View style={styles.teamMembers}>
           <View style={styles.teamMember}>
-            {renderAvatar(
-              "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=80&h=80&fit=crop&crop=face",
-              "PK",
-              "priyal",
-            )}
+            {renderAvatar(require("../../assets/images/team/priyal.jpg"), "PK", "priyal")}
             <Text style={styles.memberName}>Priyal Kumar</Text>
             <Text style={styles.memberRole}>Founder</Text>
-            <Text style={styles.memberDesc}>Built the Website</Text>
+            <Text style={styles.memberDesc}>CSE'27, HBTU</Text>
           </View>
           <View style={styles.teamMember}>
-            {renderAvatar(
-              "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=80&h=80&fit=crop&crop=face",
-              "RS",
-              "ravi",
-            )}
+            {renderAvatar(require("../../assets/images/team/ravi.jpg"), "RPS", "ravi")}
             <Text style={styles.memberName}>Ravi Pratap Singh</Text>
             <Text style={styles.memberRole}>Co-Founder</Text>
-            <Text style={styles.memberDesc}>Built the Mobile App</Text>
+            <Text style={styles.memberDesc}>CSE'27, HBTU </Text>
           </View>
         </View>
         <View style={styles.teamFooter}>
           <Text style={styles.teamCollege}>Harcourt Butler Technical University</Text>
-          <Text style={styles.teamDepartment}>Computer Science & Engineering</Text>
-          <Text style={styles.teamVersion}>Version 1.2.0</Text>
+          <Text style={styles.teamDepartment}>College Study</Text>
+          <Text style={styles.teamVersion}>Version 1.0.0</Text>
         </View>
       </View>
     );
@@ -206,7 +199,7 @@ export default function Welcome() {
           <View style={styles.header}>
             {slide.showLogo && (
               <View style={styles.logoContainer}>
-                <Logo size="large" variant="minimal" />
+                <Logo size="large" variant="minimal" style={{ width: 250, height: 220}}/>
               </View>
             )}
             <Text style={[styles.title, { color: slide.color }]}>{slide.title}</Text>
@@ -312,14 +305,16 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     paddingHorizontal: 24,
-    paddingVertical: 100,
+    paddingBottom: 50,
+    paddingTop: 100,
   },
   header: {
     alignItems: "center",
-    marginBottom: 20,
+    marginBottom: 10,
   },
   logoContainer: {
-    marginBottom: 16,
+    marginBottom: 12,
+    alignItems: "center",
   },
   title: {
     fontSize: 36,
@@ -435,20 +430,20 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   avatarImage: {
-    width: 64,
-    height: 64,
+    width: 96,
+    height: 96,
     borderRadius: 50,
     borderWidth: 2,
-    borderColor: "#eb2f96",
+    borderColor: "#374151",
     marginBottom: 8,
   },
   avatarFallback: {
-    width: 64,
-    height: 64,
+    width: 96,
+    height: 96,
     borderRadius: 50,
     backgroundColor: "#fef7f7",
     borderWidth: 2,
-    borderColor: "#eb2f96",
+    borderColor: "#374151",
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 8,
@@ -456,7 +451,7 @@ const styles = StyleSheet.create({
   avatarText: {
     fontSize: 16,
     fontWeight: "800",
-    color: "#eb2f96",
+    color: "#374151",
   },
   memberName: {
     fontSize: 16,
@@ -467,7 +462,7 @@ const styles = StyleSheet.create({
   },
   memberRole: {
     fontSize: 12,
-    color: "#eb2f96",
+    color: "#0066cc",
     fontWeight: "600",
     textAlign: "center",
     marginBottom: 2,

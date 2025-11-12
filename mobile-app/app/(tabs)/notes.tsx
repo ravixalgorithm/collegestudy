@@ -100,18 +100,95 @@ export default function Notes() {
           branches: Array.isArray(profileData.branches) ? profileData.branches[0] : profileData.branches,
         } as UserProfile);
 
-        // Load subjects for user's branch and semester
-        const { data: subjectsData } = await supabase
-          .from("subjects")
-          .select("*")
-          .eq("branch_id", profileData.branch_id)
-          .eq("semester", profileData.semester)
-          .order("name");
+        // Load subjects for user's branch and semester using proper many-to-many relationship
+        let extractedSubjects = [];
+        
+        console.log("Loading subjects for branch:", profileData.branch_id, "semester:", profileData.semester);
+        
+        try {
+          const { data: subjectsData, error: subjectsError } = await supabase
+            .from("subject_branches")
+            .select(`
+              subjects!inner (
+                id,
+                name,
+                code,
+                semester,
+                is_active
+              )
+            `)
+            .eq("branch_id", profileData.branch_id)
+            .eq("subjects.semester", profileData.semester)
+            .eq("subjects.is_active", true)
+            .order("subjects.name");
 
-        if (subjectsData) {
+          console.log("Junction table query result:", { subjectsData, subjectsError });
+
+          if (!subjectsError && subjectsData && subjectsData.length > 0) {
+            // Extract subjects from the junction table result
+            extractedSubjects = subjectsData.map(item => item.subjects).filter(Boolean);
+            console.log("Extracted subjects from junction table:", extractedSubjects.length);
+          } else {
+            console.log("No subjects found via junction table, trying fallback...");
+            throw new Error("Junction table query returned no results");
+          }
+        } catch (junctionError) {
+          console.log("Junction table query failed, trying alternative approaches...");
+          
+          // Fallback 1: Try without semester filter in case semester data is inconsistent
+          try {
+            const { data: fallbackSubjects1 } = await supabase
+              .from("subject_branches")
+              .select(`
+                subjects!inner (
+                  id,
+                  name,
+                  code,
+                  semester,
+                  is_active
+                )
+              `)
+              .eq("branch_id", profileData.branch_id)
+              .eq("subjects.is_active", true)
+              .order("subjects.name");
+
+            if (fallbackSubjects1 && fallbackSubjects1.length > 0) {
+              // Filter by semester after fetching
+              const semesterFiltered = fallbackSubjects1
+                .map(item => item.subjects)
+                .filter(Boolean)
+                .filter((subject: any) => subject.semester === profileData.semester);
+              
+              if (semesterFiltered.length > 0) {
+                extractedSubjects = semesterFiltered;
+                console.log("Found subjects via fallback 1 (no semester filter):", extractedSubjects.length);
+              }
+            }
+          } catch (fallback1Error) {
+            console.log("Fallback 1 failed, trying fallback 2...");
+          }
+          
+          // Fallback 2: Direct query on subjects table (less precise but works)
+          if (extractedSubjects.length === 0) {
+            const { data: directSubjects } = await supabase
+              .from("subjects")
+              .select("id, name, code, semester, is_active")
+              .eq("semester", profileData.semester)
+              .eq("is_active", true)
+              .order("name");
+              
+            extractedSubjects = directSubjects || [];
+            console.log("Found subjects via direct query:", extractedSubjects.length);
+          }
+        }
+
+        console.log("Final extracted subjects count:", extractedSubjects.length);
+        console.log("Sample subject:", extractedSubjects[0]);
+
+        if (extractedSubjects.length > 0) {
           // Load notes for each subject
           const subjectsWithNotes = await Promise.all(
-            subjectsData.map(async (subject) => {
+            extractedSubjects.map(async (subject) => {
               const { data: notesData } = await supabase
                 .from("notes")
                 .select("*")
@@ -161,7 +238,8 @@ export default function Notes() {
         }
       }
     } catch (error) {
-      console.error("Error loading data:", error);
+      console.log("Could not load notes data - may be empty or permission restricted");
+      // Don't show alert for empty data - just show empty state
     } finally {
       setLoading(false);
     }
@@ -630,7 +708,7 @@ export default function Notes() {
                       ) : (
                         <>
                           {/* PYQ Section */}
-                          {hasPYQ && renderCategory(subject, "pyq", "📝 Previous Year Questions", subject.notes.pyq)}
+                          {hasPYQ && renderCategory(subject, "pyq", "Previous Year Questions", subject.notes.pyq)}
 
                           {/* Modules */}
                           {hasModules && (
@@ -639,7 +717,7 @@ export default function Notes() {
                                 renderCategory(
                                   subject,
                                   moduleNum.toString(),
-                                  `📚 Module ${moduleNum}`,
+                                  `Module ${moduleNum}`,
                                   subject.notes.modules[moduleNum],
                                 ),
                               )}

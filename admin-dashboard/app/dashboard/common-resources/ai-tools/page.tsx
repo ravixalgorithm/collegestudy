@@ -18,247 +18,121 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/lib/supabase";
-import { Plus, Edit, Trash2, Search, Star, ExternalLink, Bot, TrendingUp, Users } from "lucide-react";
+import { Plus, Edit, Trash2, Search, Download, Star, Eye, ExternalLink, Bot, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 
-interface AIToolCategory {
-  id: string;
-  title: string;
-  description: string;
-  is_active: boolean;
-  tool_count?: number;
-}
-
+// Updated interfaces for unified schema
 interface AITool {
   id: string;
-  name: string;
-  description: string;
   category_id: string;
-  url: string;
-  is_premium: boolean;
-  price?: string;
-  rating: number;
-  features: string[];
-  logo_url?: string;
-  screenshot_urls: string[];
+  title: string;
+  description: string;
+  resource_type: 'ai_tool';
+  tool_url: string;
+  pricing_type: 'free' | 'premium' | 'freemium';
   tags: string[];
-  popularity_score: number;
+  thumbnail_url?: string;
+  downloads: number;
+  views: number;
+  rating: number;
+  rating_count: number;
   is_featured: boolean;
+  is_approved: boolean;
   is_active: boolean;
-  meta_data: any;
-  created_by: string;
+  uploaded_by?: string;
   created_at: string;
-  category?: AIToolCategory | null;
+  updated_at: string;
 }
 
-export default function AIToolsManagement() {
-  const [categories, setCategories] = useState<AIToolCategory[]>([]);
+export default function AIToolsPage() {
   const [tools, setTools] = useState<AITool[]>([]);
-  const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-  const [showCategoryDialog, setShowCategoryDialog] = useState(false);
-  const [showToolDialog, setShowToolDialog] = useState(false);
-  const [editingCategory, setEditingCategory] = useState<AIToolCategory | null>(null);
+  const [pricingFilter, setPricingFilter] = useState<string>("all");
+  const [showToolModal, setShowToolModal] = useState(false);
   const [editingTool, setEditingTool] = useState<AITool | null>(null);
 
-  // Form states
-  const [categoryForm, setCategoryForm] = useState({
+  // Form state
+  const [toolForm, setToolForm] = useState({
     title: "",
     description: "",
-  });
-
-  const [toolForm, setToolForm] = useState({
-    name: "",
-    description: "",
-    category_id: "",
-    url: "",
-    is_premium: false,
-    price: "",
-    rating: 0,
-    features: [] as string[],
-    logo_url: "",
-    screenshot_urls: [] as string[],
+    tool_url: "",
+    pricing_type: "free" as "free" | "premium" | "freemium",
     tags: [] as string[],
-    popularity_score: 0,
-    is_featured: false,
-    is_active: true,
   });
 
   useEffect(() => {
-    fetchCategories();
     fetchTools();
   }, []);
-
-  useEffect(() => {
-    fetchTools();
-  }, [selectedCategory]);
-
-  const fetchCategories = async () => {
-    try {
-      const { data, error } = await supabase.from("ai_tool_categories").select("id, title, description, is_active, created_at, updated_at").order("title");
-
-      if (error) throw error;
-
-      // Get tool counts for each category
-      const categoriesWithStats = await Promise.all(
-        (data || []).map(async (category) => {
-          const { count } = await supabase
-            .from("ai_tools")
-            .select("*", { count: "exact", head: true })
-            .eq("category_id", category.id)
-            .eq("is_active", true);
-
-          return {
-            ...category,
-            tool_count: count || 0,
-          };
-        }),
-      );
-
-      setCategories(categoriesWithStats);
-    } catch (error) {
-      console.error("Error fetching categories:", error);
-      toast.error("Failed to load AI tool categories");
-    }
-  };
 
   const fetchTools = async () => {
     try {
       setLoading(true);
       let query = supabase
-        .from("ai_tools")
-        .select(
-          `
-          id, name, description, category_id, url, is_premium, price, rating, features, logo_url, screenshot_urls, tags, popularity_score, is_featured, is_active, meta_data, created_by, created_at, updated_at,
-          ai_tool_categories!inner(title)
-        `,
-        )
+        .from("resources")
+        .select("*")
+        .eq("category_id", "ai-tools")
+        .eq("resource_type", "ai_tool")
+        .eq("is_active", true)
         .order("created_at", { ascending: false });
 
-      if (selectedCategory !== "all") {
-        query = query.eq("category_id", selectedCategory);
+      if (pricingFilter !== "all") {
+        query = query.eq("pricing_type", pricingFilter);
+      }
+
+      if (searchTerm) {
+        query = query.or(`title.ilike.%${searchTerm}%,description.ilike.%${searchTerm}%`);
       }
 
       const { data, error } = await query;
       if (error) throw error;
 
-      const toolsWithCategory = (data || []).map((tool) => ({
-        ...tool,
-        features: tool.features || [],
-        tags: tool.tags || [],
-        screenshot_urls: tool.screenshot_urls || [],
-        category: tool.ai_tool_categories?.[0] ? {
-          id: tool.category_id,
-          title: tool.ai_tool_categories[0].title,
-          description: '',
-          is_active: true,
-        } : null,
-      }));
-
-      setTools(toolsWithCategory);
+      setTools(data || []);
     } catch (error) {
-      console.error("Error fetching tools:", error);
+      console.error("Error fetching AI tools:", error);
       toast.error("Failed to load AI tools");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleCreateCategory = async () => {
-    try {
-      const { error } = await supabase.from("ai_tool_categories").insert([
-        {
-          ...categoryForm,
-          id: categoryForm.title.toLowerCase().replace(/[^a-z0-9]/g, "-"),
-        },
-      ]);
-
-      if (error) throw error;
-
-      toast.success("AI tool category created successfully");
-      setShowCategoryDialog(false);
-      resetCategoryForm();
-      fetchCategories();
-    } catch (error) {
-      console.error("Error creating category:", error);
-      toast.error("Failed to create category");
-    }
-  };
-
-  const handleUpdateCategory = async () => {
-    if (!editingCategory) return;
-
-    try {
-      const { error } = await supabase.from("ai_tool_categories")
-        .update({
-          title: categoryForm.title,
-          description: categoryForm.description,
-        })
-        .eq("id", editingCategory.id);
-
-      if (error) throw error;
-
-      toast.success("Category updated successfully");
-      setShowCategoryDialog(false);
-      resetCategoryForm();
-      setEditingCategory(null);
-      fetchCategories();
-    } catch (error) {
-      console.error("Error updating category:", error);
-      toast.error("Failed to update category");
-    }
-  };
-
-  const handleDeleteCategory = async (categoryId: string) => {
-    if (!confirm("Are you sure? This will delete all AI tools in this category.")) return;
-
-    try {
-      const { error } = await supabase.from("ai_tool_categories").delete().eq("id", categoryId);
-
-      if (error) throw error;
-
-      toast.success("Category deleted successfully");
-      fetchCategories();
-      fetchTools();
-    } catch (error) {
-      console.error("Error deleting category:", error);
-      toast.error("Failed to delete category");
-    }
-  };
+  useEffect(() => {
+    fetchTools();
+  }, [pricingFilter, searchTerm]);
 
   const handleCreateTool = async () => {
     try {
       const user = await supabase.auth.getUser();
-      const { error } = await supabase.from("ai_tools").insert([
+      const { error } = await supabase.from("resources").insert([
         {
-          name: toolForm.name,
+          category_id: "ai-tools",
+          topic_id: null, // AI tools don't have topics
+          title: toolForm.title,
           description: toolForm.description,
-          category_id: toolForm.category_id,
-          url: toolForm.url,
-          is_premium: toolForm.is_premium,
-          price: toolForm.price || null,
-          rating: toolForm.rating || 0,
-          features: toolForm.features,
-          logo_url: toolForm.logo_url || null,
-          screenshot_urls: toolForm.screenshot_urls,
+          resource_type: "ai_tool",
+          tool_url: toolForm.tool_url,
+          pricing_type: toolForm.pricing_type,
           tags: toolForm.tags,
-          popularity_score: toolForm.popularity_score || 0,
-          is_featured: toolForm.is_featured,
-          is_active: toolForm.is_active,
-          created_by: user.data.user?.id || null,
+          downloads: 0,
+          views: 0,
+          rating: 0.0,
+          rating_count: 0,
+          is_featured: false,
+          is_approved: false,
+          is_active: true,
+          uploaded_by: user.data.user?.id,
         },
       ]);
 
       if (error) throw error;
 
-      toast.success("AI tool added successfully");
-      setShowToolDialog(false);
+      toast.success("AI tool created successfully");
+      setShowToolModal(false);
       resetToolForm();
       fetchTools();
     } catch (error) {
-      console.error("Error creating tool:", error);
-      toast.error("Failed to create tool");
+      console.error("Error creating AI tool:", error);
+      toast.error("Failed to create AI tool");
     }
   };
 
@@ -266,35 +140,27 @@ export default function AIToolsManagement() {
     if (!editingTool) return;
 
     try {
-      const { error } = await supabase.from("ai_tools")
+      const { error } = await supabase.from("resources")
         .update({
-          name: toolForm.name,
+          title: toolForm.title,
           description: toolForm.description,
-          category_id: toolForm.category_id,
-          url: toolForm.url,
-          is_premium: toolForm.is_premium,
-          price: toolForm.price,
-          rating: toolForm.rating,
-          features: toolForm.features,
-          logo_url: toolForm.logo_url,
-          screenshot_urls: toolForm.screenshot_urls,
+          tool_url: toolForm.tool_url,
+          pricing_type: toolForm.pricing_type,
           tags: toolForm.tags,
-          popularity_score: toolForm.popularity_score,
-          is_featured: toolForm.is_featured,
-          is_active: toolForm.is_active,
+          updated_at: new Date().toISOString(),
         })
         .eq("id", editingTool.id);
 
       if (error) throw error;
 
       toast.success("AI tool updated successfully");
-      setShowToolDialog(false);
-      resetToolForm();
+      setShowToolModal(false);
       setEditingTool(null);
+      resetToolForm();
       fetchTools();
     } catch (error) {
-      console.error("Error updating tool:", error);
-      toast.error("Failed to update tool");
+      console.error("Error updating AI tool:", error);
+      toast.error("Failed to update AI tool");
     }
   };
 
@@ -302,574 +168,414 @@ export default function AIToolsManagement() {
     if (!confirm("Are you sure you want to delete this AI tool?")) return;
 
     try {
-      const { error } = await supabase.from("ai_tools").delete().eq("id", toolId);
+      const { error } = await supabase.from("resources").delete().eq("id", toolId);
 
       if (error) throw error;
 
       toast.success("AI tool deleted successfully");
       fetchTools();
     } catch (error) {
-      console.error("Error deleting tool:", error);
-      toast.error("Failed to delete tool");
+      console.error("Error deleting AI tool:", error);
+      toast.error("Failed to delete AI tool");
     }
   };
 
-  const toggleToolStatus = async (toolId: string, field: "is_active" | "is_featured", value: boolean) => {
+  const toggleToolStatus = async (toolId: string, field: "is_active" | "is_featured" | "is_approved", value: boolean) => {
     try {
       const { error } = await supabase
-        .from("ai_tools")
-        .update({ [field]: value })
+        .from("resources")
+        .update({ [field]: value, updated_at: new Date().toISOString() })
         .eq("id", toolId);
 
       if (error) throw error;
 
-      toast.success(`Tool ${field.replace("_", " ")} updated`);
+      const statusText = field === "is_active" ? "activation" : field === "is_featured" ? "featured" : "approval";
+      toast.success(`Tool ${statusText} updated successfully`);
       fetchTools();
     } catch (error) {
       console.error(`Error updating tool ${field}:`, error);
-      toast.error(`Failed to update tool ${field.replace("_", " ")}`);
+      toast.error(`Failed to update tool ${field}`);
     }
-  };
-
-  const resetCategoryForm = () => {
-    setCategoryForm({
-      title: "",
-      description: "",
-    });
   };
 
   const resetToolForm = () => {
     setToolForm({
-      name: "",
+      title: "",
       description: "",
-      category_id: "",
-      url: "",
-      is_premium: false,
-      price: "",
-      rating: 0,
-      features: [],
-      logo_url: "",
-      screenshot_urls: [],
+      tool_url: "",
+      pricing_type: "free",
       tags: [],
-      popularity_score: 0,
-      is_featured: false,
-      is_active: true,
     });
   };
 
-  const openEditCategory = (category: AIToolCategory) => {
-    setEditingCategory(category);
-    setCategoryForm({
-      title: category.title,
-      description: category.description,
-    });
-    setShowCategoryDialog(true);
-  };
-
-
-
-
-
-  const openEditTool = (tool: AITool) => {
+  const openEditToolModal = (tool: AITool) => {
     setEditingTool(tool);
     setToolForm({
-      name: tool.name,
+      title: tool.title,
       description: tool.description,
-      url: tool.url,
-      category_id: tool.category_id,
-      is_premium: tool.is_premium,
-      price: tool.price || "",
-      rating: tool.rating,
-      features: tool.features || [],
-      logo_url: tool.logo_url || "",
-      screenshot_urls: tool.screenshot_urls || [],
+      tool_url: tool.tool_url,
+      pricing_type: tool.pricing_type,
       tags: tool.tags || [],
-      popularity_score: tool.popularity_score,
-      is_featured: tool.is_featured,
-      is_active: tool.is_active,
     });
-    setShowToolDialog(true);
+    setShowToolModal(true);
   };
 
-  const filteredTools = tools.filter(
-    (tool) =>
-      tool.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      tool.description?.toLowerCase().includes(searchTerm.toLowerCase()),
-  );
+  const getPricingColor = (pricing: string) => {
+    switch (pricing) {
+      case "free": return "bg-green-100 text-green-800";
+      case "premium": return "bg-red-100 text-red-800";
+      case "freemium": return "bg-blue-100 text-blue-800";
+      default: return "bg-gray-100 text-gray-800";
+    }
+  };
+
+  const handleVisitTool = (url: string) => {
+    window.open(url, '_blank');
+  };
 
   return (
     <DashboardLayout>
-      <div className="space-y-8">
+      <div className="space-y-6">
         {/* Header */}
-        <div className="border-b border-gray-200 pb-6">
-          <div className="flex justify-between items-center">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-                <div className="h-10 w-10 rounded-lg bg-purple-100 flex items-center justify-center">
-                  <Bot className="h-6 w-6 text-purple-600" />
-                </div>
-                AI Tools Management
-              </h1>
-              <p className="text-gray-600 mt-2">Manage AI tools and categories for student productivity</p>
-            </div>
-            <div className="flex gap-3">
-              <Dialog open={showCategoryDialog} onOpenChange={setShowCategoryDialog}>
-                <DialogTrigger asChild>
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      resetCategoryForm();
-                      setEditingCategory(null);
-                    }}
-                  >
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add Category
+        <div className="flex justify-between items-center">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
+              <Bot className="h-8 w-8 text-purple-600" />
+              AI Tools
+            </h1>
+            <p className="text-gray-600 mt-1">Manage AI tools and productivity resources</p>
+          </div>
+          <div className="flex gap-3">
+            <Dialog open={showToolModal} onOpenChange={setShowToolModal}>
+              <DialogTrigger asChild>
+                <Button onClick={() => { resetToolForm(); setEditingTool(null); }}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add AI Tool
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-2xl">
+                <DialogHeader>
+                  <DialogTitle>{editingTool ? "Edit AI Tool" : "Add New AI Tool"}</DialogTitle>
+                  <DialogDescription>
+                    {editingTool ? "Update the AI tool details" : "Add a new AI tool to the collection"}
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <Input
+                    placeholder="Tool name"
+                    value={toolForm.title}
+                    onChange={(e) => setToolForm({ ...toolForm, title: e.target.value })}
+                  />
+                  <Textarea
+                    placeholder="Tool description"
+                    value={toolForm.description}
+                    onChange={(e) => setToolForm({ ...toolForm, description: e.target.value })}
+                  />
+                  <Input
+                    placeholder="Tool URL (https://...)"
+                    value={toolForm.tool_url}
+                    onChange={(e) => setToolForm({ ...toolForm, tool_url: e.target.value })}
+                  />
+                  <Select value={toolForm.pricing_type} onValueChange={(value: "free" | "premium" | "freemium") => setToolForm({ ...toolForm, pricing_type: value })}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select pricing type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="free">Free</SelectItem>
+                      <SelectItem value="freemium">Freemium</SelectItem>
+                      <SelectItem value="premium">Premium</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    placeholder="Tags (comma-separated)"
+                    value={toolForm.tags.join(", ")}
+                    onChange={(e) => setToolForm({ ...toolForm, tags: e.target.value.split(",").map(tag => tag.trim()).filter(Boolean) })}
+                  />
+                  <div className="flex gap-2">
+                    <Button onClick={editingTool ? handleUpdateTool : handleCreateTool} className="flex-1">
+                      {editingTool ? "Update Tool" : "Create Tool"}
                     </Button>
-                  </DialogTrigger>
-                <Dialog open={showToolDialog} onOpenChange={setShowToolDialog}>
-                  <DialogTrigger asChild>
-                    <Button
-                      onClick={() => {
-                        resetToolForm();
-                        setEditingTool(null);
-                      }}
-                    >
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Tool
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent
-                    className="max-w-4xl bg-white border border-gray-200 shadow-lg !bg-white"
-                    style={{
-                      backgroundColor: "white",
-                      color: "black",
-                    }}
-                  >
-                    <DialogHeader>
-                      <DialogTitle className="text-gray-900">
-                        {editingTool ? "Edit AI Tool" : "Add New AI Tool"}
-                      </DialogTitle>
-                      <DialogDescription className="text-gray-600">
-                        {editingTool ? "Update the AI tool information" : "Add a new AI tool to the platform"}
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4 max-h-[60vh] overflow-y-auto">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                          <label className="text-sm font-medium text-gray-700">Tool Name *</label>
-                          <Input
-                            value={toolForm.name}
-                            onChange={(e) => setToolForm({ ...toolForm, name: e.target.value })}
-                            placeholder="e.g., ChatGPT"
-                            className="bg-white border-gray-300"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-sm font-medium text-gray-700">Category *</label>
-                          <Select value={toolForm.category_id} onValueChange={(value) => setToolForm({ ...toolForm, category_id: value })}>
-                            <SelectTrigger className="bg-white border-gray-300">
-                              <SelectValue placeholder="Select category" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {categories.map((category) => (
-                                <SelectItem key={category.id} value={category.id}>
-                                  {category.title}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="text-sm font-medium text-gray-700">Description *</label>
-                        <Textarea
-                          value={toolForm.description}
-                          onChange={(e) => setToolForm({ ...toolForm, description: e.target.value })}
-                          placeholder="Brief description of the AI tool"
-                          className="bg-white border-gray-300"
-                          rows={3}
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-sm font-medium text-gray-700">URL *</label>
-                        <Input
-                          value={toolForm.url}
-                          onChange={(e) => setToolForm({ ...toolForm, url: e.target.value })}
-                          placeholder="https://example.com"
-                          className="bg-white border-gray-300"
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div>
-                          <label className="text-sm font-medium text-gray-700">Rating</label>
-                          <Input
-                            type="number"
-                            min="0"
-                            max="5"
-                            step="0.1"
-                            value={toolForm.rating}
-                            onChange={(e) => setToolForm({ ...toolForm, rating: parseFloat(e.target.value) || 0 })}
-                            placeholder="4.5"
-                            className="bg-white border-gray-300"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-sm font-medium text-gray-700">Popularity Score</label>
-                          <Input
-                            type="number"
-                            min="0"
-                            max="100"
-                            value={toolForm.popularity_score}
-                            onChange={(e) => setToolForm({ ...toolForm, popularity_score: parseInt(e.target.value) || 0 })}
-                            placeholder="85"
-                            className="bg-white border-gray-300"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-sm font-medium text-gray-700">Price (if premium)</label>
-                          <Input
-                            value={toolForm.price}
-                            onChange={(e) => setToolForm({ ...toolForm, price: e.target.value })}
-                            placeholder="$20/month"
-                            className="bg-white border-gray-300"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="text-sm font-medium text-gray-700">Logo URL</label>
-                        <Input
-                          value={toolForm.logo_url}
-                          onChange={(e) => setToolForm({ ...toolForm, logo_url: e.target.value })}
-                          placeholder="https://example.com/logo.png"
-                          className="bg-white border-gray-300"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-sm font-medium text-gray-700">Features (one per line)</label>
-                        <Textarea
-                          value={toolForm.features.join('\n')}
-                          onChange={(e) => setToolForm({ ...toolForm, features: e.target.value.split('\n').filter(f => f.trim()) })}
-                          placeholder="AI Writing&#10;Grammar Check&#10;Content Generation"
-                          className="bg-white border-gray-300"
-                          rows={4}
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-sm font-medium text-gray-700">Tags (comma separated)</label>
-                        <Input
-                          value={toolForm.tags.join(', ')}
-                          onChange={(e) => setToolForm({ ...toolForm, tags: e.target.value.split(',').map(t => t.trim()).filter(t => t) })}
-                          placeholder="writing, AI, productivity"
-                          className="bg-white border-gray-300"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-sm font-medium text-gray-700">Screenshot URLs (one per line)</label>
-                        <Textarea
-                          value={toolForm.screenshot_urls.join('\n')}
-                          onChange={(e) => setToolForm({ ...toolForm, screenshot_urls: e.target.value.split('\n').filter(s => s.trim()) })}
-                          placeholder="https://example.com/screenshot1.png&#10;https://example.com/screenshot2.png"
-                          className="bg-white border-gray-300"
-                          rows={3}
-                        />
-                      </div>
-
-                      <div className="flex flex-wrap gap-4">
-                        <div className="flex items-center space-x-2">
-                          <input
-                            type="checkbox"
-                            id="is_premium"
-                            checked={toolForm.is_premium}
-                            onChange={(e) => setToolForm({ ...toolForm, is_premium: e.target.checked })}
-                            className="rounded border-gray-300"
-                          />
-                          <label htmlFor="is_premium" className="text-sm font-medium text-gray-700">Premium Tool</label>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <input
-                            type="checkbox"
-                            id="is_featured"
-                            checked={toolForm.is_featured}
-                            onChange={(e) => setToolForm({ ...toolForm, is_featured: e.target.checked })}
-                            className="rounded border-gray-300"
-                          />
-                          <label htmlFor="is_featured" className="text-sm font-medium text-gray-700">Featured</label>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <input
-                            type="checkbox"
-                            id="is_active"
-                            checked={toolForm.is_active}
-                            onChange={(e) => setToolForm({ ...toolForm, is_active: e.target.checked })}
-                            className="rounded border-gray-300"
-                          />
-                          <label htmlFor="is_active" className="text-sm font-medium text-gray-700">Active</label>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex justify-end gap-3 mt-6">
-                      <Button
-                        variant="outline"
-                        onClick={() => setShowToolDialog(false)}
-                        className="text-gray-700 border-gray-300"
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        onClick={editingTool ? handleUpdateTool : handleCreateTool}
-                        disabled={!toolForm.name || !toolForm.url || !toolForm.category_id}
-                        className="bg-blue-600 hover:bg-blue-700 text-white"
-                      >
-                        {editingTool ? "Update Tool" : "Add Tool"}
-                      </Button>
-                    </div>
-                  </DialogContent>
-                </Dialog>
-                  <DialogContent
-                    className="max-w-2xl bg-white border border-gray-200 shadow-lg !bg-white"
-                  style={{ backgroundColor: '#ffffff', color: '#111827' }}
-                >
-                  <DialogHeader>
-                    <DialogTitle>{editingCategory ? "Edit Category" : "Create New AI Tool Category"}</DialogTitle>
-                    <DialogDescription>
-                      {editingCategory ? "Update category information" : "Add a new category for AI tools"}
-                    </DialogDescription>
-                  </DialogHeader>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium mb-2">Title</label>
-                      <Input
-                        value={categoryForm.title}
-                        onChange={(e) => setCategoryForm({ ...categoryForm, title: e.target.value })}
-                        placeholder="e.g., Writing & Content"
-                      />
-                    </div>
-                    <div className="col-span-2">
-                      <label className="block text-sm font-medium mb-2">Description</label>
-                      <Textarea
-                        value={categoryForm.description}
-                        onChange={(e) => setCategoryForm({ ...categoryForm, description: e.target.value })}
-                        placeholder="Brief description of the category"
-                        rows={3}
-                      />
-                    </div>
-
-                  </div>
-                  <div className="flex justify-end gap-3 pt-4">
-                    <Button variant="outline" onClick={() => setShowCategoryDialog(false)}>
+                    <Button variant="outline" onClick={() => setShowToolModal(false)}>
                       Cancel
                     </Button>
-                    <Button onClick={editingCategory ? handleUpdateCategory : handleCreateCategory}>
-                      {editingCategory ? "Update" : "Create"} Category
-                    </Button>
                   </div>
-                </DialogContent>
-              </Dialog>
-
-            
-            </div>
+                </div>
+              </DialogContent>
+            </Dialog>
           </div>
         </div>
 
-        {/* Statistics Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        {/* Stats Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Total Categories</p>
-                  <p className="text-2xl font-bold">{categories.length}</p>
-                </div>
-                <Bot className="h-8 w-8 text-purple-600" />
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Total Tools</CardTitle>
+              <Bot className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{tools.length}</div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Free Tools</CardTitle>
+              <Star className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">
+                {tools.filter(tool => tool.pricing_type === "free").length}
               </div>
             </CardContent>
           </Card>
-
           <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Total AI Tools</p>
-                  <p className="text-2xl font-bold">{tools.length}</p>
-                </div>
-                <TrendingUp className="h-8 w-8 text-green-600" />
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Featured Tools</CardTitle>
+              <TrendingUp className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">
+                {tools.filter(tool => tool.is_featured).length}
               </div>
             </CardContent>
           </Card>
-
           <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Featured Tools</p>
-                  <p className="text-2xl font-bold">{tools.filter((tool) => tool.is_featured).length}</p>
-                </div>
-                <Star className="h-8 w-8 text-yellow-600" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Premium Tools</p>
-                  <p className="text-2xl font-bold">{tools.filter((tool) => tool.is_premium).length}</p>
-                </div>
-                <Users className="h-8 w-8 text-blue-600" />
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Total Views</CardTitle>
+              <Eye className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">
+                {tools.reduce((sum, tool) => sum + tool.views, 0)}
               </div>
             </CardContent>
           </Card>
         </div>
 
-        {/* Categories Grid */}
+        {/* Tools Grid View */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <TrendingUp className="h-5 w-5" />
-              AI Tool Categories
-            </CardTitle>
-            <CardDescription>Manage categories for organizing AI tools</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {categories.map((category) => (
-                <Card key={category.id} className="border hover:shadow-md transition-shadow">
-                  <CardContent className="p-4">
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="flex items-center gap-2">
-
-                        <div>
-                          <h3 className="font-semibold">{category.title}</h3>
-                          <Badge variant={category.is_active ? "default" : "secondary"}>
-                            {category.is_active ? "Active" : "Inactive"}
-                          </Badge>
-                        </div>
-                      </div>
-                      <div className="flex gap-1">
-                        <Button variant="ghost" size="sm" onClick={() => openEditCategory(category)}>
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => handleDeleteCategory(category.id)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                    <p className="text-sm text-gray-600 mb-3">{category.description}</p>
-                    <div className="text-xs text-gray-500">
-                      <span>Tools: {category.tool_count || 0}</span>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Tools Management */}
-        <Card>
-          <CardHeader>
-            <div className="flex justify-between items-center">
+            <div className="flex items-center justify-between">
               <div>
-                <CardTitle>AI Tools</CardTitle>
-                <CardDescription>Manage AI tools and their information</CardDescription>
+                <CardTitle>AI Tools Collection</CardTitle>
+                <CardDescription>Browse and manage AI tools for productivity and development</CardDescription>
               </div>
-              <div className="flex gap-3">
+              <div className="flex gap-2">
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                   <Input
                     placeholder="Search tools..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-10 w-64"
+                    className="pl-8 w-64"
                   />
                 </div>
-                <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+                <Select value={pricingFilter} onValueChange={setPricingFilter}>
                   <SelectTrigger className="w-48">
-                    <SelectValue />
+                    <SelectValue placeholder="Filter by pricing" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Categories</SelectItem>
-                    {categories.map((category) => (
-                      <SelectItem key={category.id} value={category.id}>
-                        {category.title}
-                      </SelectItem>
-                    ))}
+                    <SelectItem value="all">All Pricing</SelectItem>
+                    <SelectItem value="free">Free</SelectItem>
+                    <SelectItem value="freemium">Freemium</SelectItem>
+                    <SelectItem value="premium">Premium</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
           </CardHeader>
           <CardContent>
+            {loading ? (
+              <div className="text-center py-8">Loading AI tools...</div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {tools.map((tool) => (
+                  <Card key={tool.id} className="hover:shadow-lg transition-shadow cursor-pointer">
+                    <CardHeader className="pb-3">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <CardTitle className="text-lg flex items-center gap-2">
+                            <Bot className="h-5 w-5 text-purple-600" />
+                            {tool.title}
+                          </CardTitle>
+                          <div className="flex gap-2 mt-2">
+                            <Badge className={getPricingColor(tool.pricing_type)}>
+                              {tool.pricing_type}
+                            </Badge>
+                            {tool.is_featured && (
+                              <Badge className="bg-yellow-100 text-yellow-800">
+                                <Star className="h-3 w-3 mr-1" />
+                                Featured
+                              </Badge>
+                            )}
+                            {!tool.is_approved && (
+                              <Badge variant="secondary">Pending</Badge>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <CardDescription className="text-sm mt-2">
+                        {tool.description}
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-3">
+                        {/* Tags */}
+                        {tool.tags && tool.tags.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {tool.tags.slice(0, 3).map((tag, index) => (
+                              <Badge key={index} variant="outline" className="text-xs">
+                                {tag}
+                              </Badge>
+                            ))}
+                            {tool.tags.length > 3 && (
+                              <Badge variant="outline" className="text-xs">
+                                +{tool.tags.length - 3} more
+                              </Badge>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Stats */}
+                        <div className="flex items-center justify-between text-sm text-gray-600">
+                          <div className="flex items-center gap-1">
+                            <Eye className="h-3 w-3" />
+                            {tool.views} views
+                          </div>
+                          {tool.rating > 0 && (
+                            <div className="flex items-center gap-1">
+                              <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                              {tool.rating.toFixed(1)}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex gap-2">
+                          <Button 
+                            size="sm" 
+                            onClick={() => handleVisitTool(tool.tool_url)}
+                            className="flex-1"
+                          >
+                            <ExternalLink className="h-3 w-3 mr-1" />
+                            Visit Tool
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => openEditToolModal(tool)}>
+                            <Edit className="h-3 w-3" />
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => handleDeleteTool(tool.id)}>
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        </div>
+
+                        {/* Admin Actions */}
+                        <div className="flex gap-1 pt-2 border-t">
+                          <Button 
+                            size="sm" 
+                            variant="ghost"
+                            onClick={() => toggleToolStatus(tool.id, "is_approved", !tool.is_approved)}
+                            className="text-xs"
+                          >
+                            {tool.is_approved ? "Unapprove" : "Approve"}
+                          </Button>
+                          <Button 
+                            size="sm" 
+                            variant="ghost"
+                            onClick={() => toggleToolStatus(tool.id, "is_featured", !tool.is_featured)}
+                            className="text-xs"
+                          >
+                            {tool.is_featured ? "Unfeature" : "Feature"}
+                          </Button>
+                          <Button 
+                            size="sm" 
+                            variant="ghost"
+                            onClick={() => toggleToolStatus(tool.id, "is_active", !tool.is_active)}
+                            className="text-xs"
+                          >
+                            {tool.is_active ? "Deactivate" : "Activate"}
+                          </Button>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+                {tools.length === 0 && (
+                  <div className="col-span-full text-center py-8 text-gray-500">
+                    No AI tools found
+                  </div>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Table View (Alternative) */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Tools Management</CardTitle>
+            <CardDescription>Detailed view for managing AI tools</CardDescription>
+          </CardHeader>
+          <CardContent>
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Tool</TableHead>
-                  <TableHead>Category</TableHead>
-                  <TableHead>Type</TableHead>
+                  <TableHead>Pricing</TableHead>
+                  <TableHead>Views</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Rating</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredTools.map((tool) => (
+                {tools.map((tool) => (
                   <TableRow key={tool.id}>
                     <TableCell>
-                      <div className="flex items-center gap-3">
-                        {tool.logo_url ? (
-                          <img src={tool.logo_url} alt={tool.name} className="w-8 h-8 rounded" />
-                        ) : (
-                          <span className="text-2xl">🤖</span>
-                        )}
-                        <div>
-                          <p className="font-medium">{tool.name}</p>
-                          <p className="text-sm text-gray-500">{tool.description}</p>
+                      <div>
+                        <div className="font-medium">{tool.title}</div>
+                        <div className="text-sm text-gray-500 truncate max-w-xs">
+                          {tool.description}
                         </div>
                       </div>
                     </TableCell>
-                    <TableCell>{tool.category?.title || "Unknown"}</TableCell>
                     <TableCell>
-                      <Badge variant={tool.is_premium ? "default" : "outline"}>
-                        {tool.is_premium ? `Premium ${tool.price || ""}` : "Free"}
+                      <Badge className={getPricingColor(tool.pricing_type)}>
+                        {tool.pricing_type}
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <div className="flex gap-1">
-                        <Badge variant={tool.is_active ? "default" : "secondary"}>
-                          {tool.is_active ? "Active" : "Inactive"}
-                        </Badge>
-                        {tool.is_featured && <Badge variant="default">Featured</Badge>}
-                      </div>
-                    </TableCell>
-                    <TableCell>
                       <div className="flex items-center gap-1">
-                        <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
-                        {tool.rating.toFixed(1)}
+                        <Eye className="h-3 w-3" />
+                        {tool.views}
                       </div>
                     </TableCell>
                     <TableCell>
                       <div className="flex gap-1">
-                        <Button variant="ghost" size="sm" onClick={() => window.open(tool.url, "_blank")}>
-                          <ExternalLink className="h-4 w-4" />
+                        {tool.is_approved && <Badge className="bg-green-100 text-green-800">Approved</Badge>}
+                        {tool.is_featured && <Badge className="bg-blue-100 text-blue-800">Featured</Badge>}
+                        {!tool.is_active && <Badge variant="secondary">Inactive</Badge>}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex gap-1">
+                        <Button size="sm" variant="ghost" onClick={() => handleVisitTool(tool.tool_url)}>
+                          <ExternalLink className="h-3 w-3" />
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => openEditTool(tool)}>
-                          <Edit className="h-4 w-4" />
+                        <Button size="sm" variant="ghost" onClick={() => openEditToolModal(tool)}>
+                          <Edit className="h-3 w-3" />
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => handleDeleteTool(tool.id)}>
-                          <Trash2 className="h-4 w-4" />
+                        <Button size="sm" variant="ghost" onClick={() => handleDeleteTool(tool.id)}>
+                          <Trash2 className="h-3 w-3" />
                         </Button>
                       </div>
                     </TableCell>
                   </TableRow>
                 ))}
+                {tools.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center py-8 text-gray-500">
+                      No AI tools found
+                    </TableCell>
+                  </TableRow>
+                )}
               </TableBody>
             </Table>
           </CardContent>

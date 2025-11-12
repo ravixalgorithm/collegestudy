@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import { View, Text, TouchableOpacity, Animated, Dimensions, StyleSheet, PanResponder } from "react-native";
+import { View, Text, TouchableOpacity, Animated, Dimensions, StyleSheet, PanResponder, Vibration, StatusBar } from "react-native";
 import { X, Bell } from "lucide-react-native";
 import { getNotificationIcon, getPriorityColor, formatRelativeTime } from "../lib/notifications";
 import type { Notification } from "../lib/notifications";
@@ -12,14 +12,28 @@ interface NotificationPopupProps {
 }
 
 const { width: screenWidth } = Dimensions.get("window");
+const statusBarHeight = StatusBar.currentHeight || 0;
 
 export function NotificationPopup({ notification, onDismiss, onMarkAsRead, index }: NotificationPopupProps) {
   const translateY = useRef(new Animated.Value(-100)).current;
   const translateX = useRef(new Animated.Value(0)).current;
   const opacity = useRef(new Animated.Value(0)).current;
   const scale = useRef(new Animated.Value(0.8)).current;
+  const pulseScale = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
+    // Play notification feedback
+    try {
+      // Vibrate based on priority
+      if (notification.priority === "urgent") {
+        Vibration.vibrate([0, 100, 50, 100]); // Double vibration for urgent
+      } else {
+        Vibration.vibrate(100); // Single vibration for normal
+      }
+    } catch (error) {
+      console.log("Vibration not supported");
+    }
+
     // Entrance animation
     Animated.parallel([
       Animated.spring(translateY, {
@@ -41,7 +55,41 @@ export function NotificationPopup({ notification, onDismiss, onMarkAsRead, index
         friction: 8,
       }),
     ]).start();
-  }, []);
+
+    // Add pulse animation for urgent notifications
+    if (notification.priority === "urgent") {
+      const pulseAnimation = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseScale, {
+            toValue: 1.05,
+            duration: 800,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseScale, {
+            toValue: 1,
+            duration: 800,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      pulseAnimation.start();
+
+      // Stop pulse after 5 seconds
+      const timeout = setTimeout(() => {
+        pulseAnimation.stop();
+        Animated.timing(pulseScale, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        }).start();
+      }, 5000);
+
+      return () => {
+        clearTimeout(timeout);
+        pulseAnimation.stop();
+      };
+    }
+  }, [notification.priority, pulseScale]);
 
   const dismissWithAnimation = () => {
     Animated.parallel([
@@ -95,9 +143,9 @@ export function NotificationPopup({ notification, onDismiss, onMarkAsRead, index
       style={[
         styles.container,
         {
-          transform: [{ translateY }, { translateX }, { scale }],
+          transform: [{ translateY }, { translateX }, { scale: Animated.multiply(scale, pulseScale) }],
           opacity,
-          top: 10 + index * 90, // Stack multiple notifications with safe area padding
+          top: statusBarHeight + 50 + index * 90, // Position below status bar with padding
           borderLeftColor: priorityColor,
           backgroundColor: isUrgent ? "#FEF2F2" : "#FFFFFF",
           borderColor: isUrgent ? "#FECACA" : "#E5E7EB",

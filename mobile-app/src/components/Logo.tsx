@@ -8,7 +8,7 @@ interface LogoProps {
   style?: any;
 }
 
-export default function Logo({ size = "medium", variant = "default", showText = true, style }: LogoProps) {
+export default function Logo({ size = "large", variant = "default", showText = true, style }: LogoProps) {
   const sizeConfig = {
     small: {
       container: 60,
@@ -24,7 +24,7 @@ export default function Logo({ size = "medium", variant = "default", showText = 
     },
     large: {
       container: 120,
-      image: 200,
+      image: 300,
       text: 28,
       subtext: 16,
     },
